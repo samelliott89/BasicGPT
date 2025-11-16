@@ -1,0 +1,4 @@
+tiktoken
+torch
+datasets
+accelerate
