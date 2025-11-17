@@ -1,0 +1,10 @@
+__pycache__/
+checkpoints/
+data/
+logs/
+results/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz

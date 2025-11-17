@@ -319,10 +319,6 @@ if __name__ == "__main__":
     # Create config with correct vocab_size
     config = GPTConfig(
         vocab_size=tokenizer.vocab_size,  # Use tokenizer's vocab_size
-        d_model=512,
-        n_heads=8,
-        n_layers=6,
-        max_length=1024
     )
     
     # Create model

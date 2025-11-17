@@ -11,7 +11,6 @@ from datasets import load_dataset
 from tokenizer import Tokenizer
 from typing import Optional
 
-
 class SYNTHDataset(Dataset):
     """
     A PyTorch Dataset class for the SYNTH dataset.

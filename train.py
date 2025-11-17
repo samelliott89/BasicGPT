@@ -15,6 +15,7 @@ from pathlib import Path
 from tokenizer import Tokenizer
 from gpt import GPT, GPTConfig, train_epoch, evaluate
 from prepare_data import load_synth_dataset, create_data_loaders
+from device import get_best_device, get_device_info
 
 
 def main():
@@ -47,8 +48,8 @@ def main():
     args = parser.parse_args()
     
     # Set device (use GPU if available)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    device = get_best_device()
+    print(f"Using device: {device} - {get_device_info(device)}")
     print()
     
     # Initialize tokenizer
