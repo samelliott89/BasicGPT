@@ -10,26 +10,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from dataclasses import dataclass
+from torch.utils.checkpoint import checkpoint
 from tokenizer import Tokenizer
-
-
-@dataclass
-class GPTConfig:
-    """
-    Configuration class for the GPT model.
-    
-    This holds all the hyperparameters (settings) for the model.
-    Using a dataclass makes it easy to pass around configuration.
-    """
-    vocab_size: int = 100256  # Vocabulary size from tiktoken cl100k_base
-    d_model: int = 512  # Dimension of the model (embedding size)
-    n_heads: int = 8  # Number of attention heads
-    n_layers: int = 6  # Number of transformer layers
-    max_length: int = 1024  # Maximum sequence length (context window)
-    dropout: float = 0.1  # Dropout rate for regularization
-    learning_rate: float = 3e-4  # Learning rate for optimizer
-    epochs: int = 1  # Number of training epochs
+from config import GPTConfig
 
 
 class GPT(nn.Module):
@@ -78,10 +61,11 @@ class GPT(nn.Module):
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=config.d_model,
             nhead=config.n_heads,
-            dim_feedforward=config.d_model * 4,  # Feedforward dimension
+            dim_feedforward=config.d_model * 4,  # Feedforward dimension (4x d_model)
             dropout=config.dropout,
             activation='gelu',  # GELU activation (common in GPT)
-            batch_first=True  # Input shape: (batch, seq, features)
+            batch_first=True,  # Input shape: (batch, seq, features)
+            norm_first=True  # Pre-norm architecture (more stable for deep models)
         )
         
         # Stack multiple transformer layers
@@ -89,6 +73,11 @@ class GPT(nn.Module):
             encoder_layer,
             num_layers=config.n_layers
         )
+        
+        # Enable gradient checkpointing to save memory (can be disabled if causing issues)
+        # This trades compute for memory by recomputing activations during backward pass
+        # Set to False if you encounter memory issues (checkpointing can sometimes cause problems)
+        self.use_checkpointing = False  # Disabled by default - enable if needed
         
         # Layer normalization (helps with training stability)
         self.ln_f = nn.LayerNorm(config.d_model)
@@ -123,9 +112,23 @@ class GPT(nn.Module):
         """
         batch_size, seq_length = input_ids.shape
         
+        # Clamp input_ids to valid vocabulary range to prevent index errors
+        # This is a safety check in case clamping wasn't done earlier
+        input_ids = torch.clamp(input_ids, 0, self.vocab_size - 1)
+        
+        # Ensure sequence length doesn't exceed max_length
+        # Note: We truncate here, but caller should ensure data is already correct length
+        # to avoid shape mismatches with target_ids
+        if seq_length > self.max_length:
+            input_ids = input_ids[:, :self.max_length]
+            seq_length = self.max_length
+        
         # Create position indices: [0, 1, 2, ..., seq_length-1]
         positions = torch.arange(0, seq_length, dtype=torch.long, device=input_ids.device)
         positions = positions.unsqueeze(0).expand(batch_size, -1)  # (batch_size, seq_length)
+        
+        # Clamp position indices to valid range [0, max_length-1]
+        positions = torch.clamp(positions, 0, self.max_length - 1)
         
         # Get embeddings
         # Token embeddings: convert token IDs to vectors
@@ -144,7 +147,16 @@ class GPT(nn.Module):
         
         # Pass through transformer layers
         # The mask ensures causal attention (can't see future tokens)
-        x = self.transformer(x, mask=causal_mask)  # (batch_size, seq_length, d_model)
+        # Use gradient checkpointing if enabled to save memory
+        if self.use_checkpointing and self.training:
+            # Gradient checkpointing: recompute activations during backward pass
+            # This saves memory at the cost of extra computation
+            # We need to wrap it in a lambda to pass the mask as a keyword argument
+            def transformer_forward(x):
+                return self.transformer(x, mask=causal_mask)
+            x = checkpoint(transformer_forward, x, use_reentrant=False)
+        else:
+            x = self.transformer(x, mask=causal_mask)  # (batch_size, seq_length, d_model)
         
         # Final layer normalization
         x = self.ln_f(x)  # (batch_size, seq_length, d_model)
@@ -170,19 +182,33 @@ class GPT(nn.Module):
         """
         # Create a lower triangular matrix
         # True = mask out (can't attend), False = can attend
-        mask = torch.triu(torch.ones(size, size, device=device), diagonal=1).bool()
+        # Use torch.triu with diagonal=1 to create upper triangular mask
+        # This is more memory efficient than creating full matrix first
+        mask = torch.triu(torch.ones(size, size, device=device, dtype=torch.bool), diagonal=1)
         return mask
     
-    def generate(self, input_ids: torch.Tensor, max_new_tokens: int = 100, temperature: float = 1.0) -> torch.Tensor:
+    def generate(
+        self, 
+        input_ids: torch.Tensor, 
+        max_new_tokens: int = 100, 
+        temperature: float = 0.8,
+        top_k: int = 50,
+        top_p: float = 0.9,
+        repetition_penalty: float = 1.1
+    ) -> torch.Tensor:
         """
         Generate new tokens given an input sequence.
         
         This is used for inference (making predictions), not training.
+        Uses improved sampling strategies for better text quality.
         
         Args:
             input_ids: Starting sequence of token IDs
             max_new_tokens: Maximum number of new tokens to generate
-            temperature: Controls randomness (higher = more random)
+            temperature: Controls randomness (lower = more focused, higher = more random)
+            top_k: Only sample from top k most likely tokens (0 = disabled)
+            top_p: Nucleus sampling - only sample from tokens with cumulative prob <= top_p (0.0 = disabled)
+            repetition_penalty: Penalty for repeating tokens (>1.0 reduces repetition)
             
         Returns:
             Generated sequence including the original input
@@ -197,10 +223,47 @@ class GPT(nn.Module):
                 logits = self.forward(generated)  # (batch_size, seq_length, vocab_size)
                 
                 # Get logits for the last position (next token prediction)
-                next_token_logits = logits[:, -1, :] / temperature  # (batch_size, vocab_size)
+                next_token_logits = logits[:, -1, :]  # (batch_size, vocab_size)
+                
+                # Apply repetition penalty
+                if repetition_penalty != 1.0:
+                    # Get unique tokens in the generated sequence
+                    unique_tokens = torch.unique(generated)
+                    # Apply penalty to repeated tokens
+                    next_token_logits[0, unique_tokens] /= repetition_penalty
+                
+                # Apply temperature
+                next_token_logits = next_token_logits / temperature
+                
+                # Top-k sampling: only consider top k tokens
+                if top_k > 0:
+                    # Get top k values and indices
+                    top_k_values, top_k_indices = torch.topk(next_token_logits, min(top_k, next_token_logits.size(-1)), dim=-1)
+                    # Create a new tensor with -inf for non-top-k tokens
+                    filtered_logits = torch.full_like(next_token_logits, float('-inf'))
+                    filtered_logits.scatter_(-1, top_k_indices, top_k_values)
+                    next_token_logits = filtered_logits
                 
                 # Apply softmax to get probabilities
                 probs = F.softmax(next_token_logits, dim=-1)  # (batch_size, vocab_size)
+                
+                # Top-p (nucleus) sampling: only sample from tokens that make up top_p probability mass
+                if top_p > 0.0 and top_p < 1.0:
+                    # Sort probabilities in descending order
+                    sorted_probs, sorted_indices = torch.sort(probs, descending=True, dim=-1)
+                    # Calculate cumulative probabilities
+                    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+                    # Find where cumulative probability exceeds top_p
+                    sorted_indices_to_remove = cumulative_probs > top_p
+                    # Keep at least one token (the most likely one)
+                    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                    sorted_indices_to_remove[..., 0] = False
+                    # Create mask for tokens to remove
+                    indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+                    # Set removed tokens' probabilities to 0
+                    probs[indices_to_remove] = 0
+                    # Renormalize
+                    probs = probs / probs.sum(dim=-1, keepdim=True)
                 
                 # Sample the next token
                 next_token = torch.multinomial(probs, num_samples=1)  # (batch_size, 1)
@@ -220,7 +283,8 @@ def train_epoch(
     train_loader,
     optimizer: optim.Optimizer,
     device: torch.device,
-    epoch: int
+    epoch: int,
+    scaler=None
 ) -> float:
     """
     Train the model for one epoch.
@@ -241,32 +305,82 @@ def train_epoch(
     
     for batch_idx, (input_ids, target_ids) in enumerate(train_loader):
         # Move data to device (GPU if available)
-        input_ids = input_ids.to(device)
-        target_ids = target_ids.to(device)
+        input_ids = input_ids.to(device, non_blocking=True)
+        target_ids = target_ids.to(device, non_blocking=True)
+        
+        # Clamp token IDs to valid vocabulary range to prevent index errors
+        vocab_size = model.vocab_size
+        input_ids = torch.clamp(input_ids, 0, vocab_size - 1)
+        target_ids = torch.clamp(target_ids, 0, vocab_size - 1)
         
         # Forward pass: get logits (predictions)
-        logits = model(input_ids)  # (batch_size, seq_length, vocab_size)
-        
-        # Reshape for loss calculation
-        # CrossEntropyLoss expects (batch*seq, vocab) and (batch*seq,)
-        logits_flat = logits.view(-1, logits.size(-1))  # (batch*seq, vocab)
-        targets_flat = target_ids.view(-1)  # (batch*seq,)
-        
-        # Calculate loss (cross-entropy for classification)
-        loss = F.cross_entropy(logits_flat, targets_flat)
+        # Use mixed precision if scaler is provided
+        if scaler is not None:
+            with torch.cuda.amp.autocast():
+                logits = model(input_ids)  # (batch_size, seq_length, vocab_size)
+                
+                # Reshape for loss calculation
+                logits_flat = logits.view(-1, logits.size(-1))  # (batch*seq, vocab)
+                targets_flat = target_ids.view(-1)  # (batch*seq,)
+                
+                # Calculate loss (cross-entropy for classification)
+                loss = F.cross_entropy(logits_flat, targets_flat)
+        else:
+            logits = model(input_ids)  # (batch_size, seq_length, vocab_size)
+            
+            # Reshape for loss calculation
+            logits_flat = logits.view(-1, logits.size(-1))  # (batch*seq, vocab)
+            targets_flat = target_ids.view(-1)  # (batch*seq,)
+            
+            # Calculate loss (cross-entropy for classification)
+            loss = F.cross_entropy(logits_flat, targets_flat)
         
         # Backward pass: compute gradients
-        optimizer.zero_grad()  # Clear previous gradients
-        loss.backward()  # Compute gradients
-        optimizer.step()  # Update weights
+        optimizer.zero_grad(set_to_none=True)  # Clear previous gradients (more efficient)
+        
+        if scaler is not None:
+            # Mixed precision backward pass
+            scaler.scale(loss).backward()
+            # Gradient clipping with scaler
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()  # Compute gradients
+            # Optional: gradient clipping for stability
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()  # Update weights
         
         # Track loss
         total_loss += loss.item()
         num_batches += 1
         
-        # Print progress
-        if (batch_idx + 1) % 100 == 0:
-            print(f"  Batch {batch_idx + 1}/{len(train_loader)}, Loss: {loss.item():.4f}")
+        # Clear CUDA cache periodically to prevent fragmentation
+        if device.type == "cuda" and (batch_idx + 1) % 100 == 0:
+            torch.cuda.empty_cache()
+        
+        # Print progress (less frequent for large batches)
+        if (batch_idx + 1) % 50 == 0:
+            # Get memory stats if on CUDA
+            if device.type == "cuda":
+                memory_allocated = torch.cuda.memory_allocated(device) / (1024**3)  # GB
+                memory_reserved = torch.cuda.memory_reserved(device) / (1024**3)  # GB
+                try:
+                    total_batches = len(train_loader)
+                    print(f"  Batch {batch_idx + 1}/{total_batches}, Loss: {loss.item():.4f}, "
+                          f"GPU Memory: {memory_allocated:.2f}GB / {memory_reserved:.2f}GB")
+                except TypeError:
+                    # IterableDataset doesn't support len()
+                    print(f"  Batch {batch_idx + 1}, Loss: {loss.item():.4f}, "
+                          f"GPU Memory: {memory_allocated:.2f}GB / {memory_reserved:.2f}GB")
+            else:
+                try:
+                    total_batches = len(train_loader)
+                    print(f"  Batch {batch_idx + 1}/{total_batches}, Loss: {loss.item():.4f}")
+                except TypeError:
+                    # IterableDataset doesn't support len()
+                    print(f"  Batch {batch_idx + 1}, Loss: {loss.item():.4f}")
     
     avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
     return avg_loss
