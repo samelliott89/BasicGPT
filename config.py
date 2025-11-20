@@ -60,7 +60,8 @@ class TrainingConfig:
     epochs: int = 1  # Number of training epochs
     weight_decay: float = 0.01  # L2 regularization (for AdamW)
     beta1: float = 0.9  # Adam beta1 parameter
-    beta2: float = 0.95  # Adam beta2 parameter
+    beta2: float = 0.999  # Adam beta2 parameter
+    eps: float = 1e-8  # Adam epsilon parameter
     max_grad_norm: float = 1.0  # Gradient clipping max norm
     gradient_accumulation_steps: int = 4  # Number of steps to accumulate gradients (1 = no accumulation, effective_batch_size = batch_size * gradient_accumulation_steps = 32 * 4 = 128)
     

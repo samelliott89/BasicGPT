@@ -391,13 +391,14 @@ def load_synth_dataset(
         )
     
     return synth_dataset
-
+    
 
 def create_data_loaders(
     train_dataset,
     val_dataset = None,
     batch_size: int = 16,  # Default batch size (should match TrainingConfig default)
-    num_workers: int = data_config.num_dataset_workers
+    num_workers: int = data_config.num_dataset_workers,
+
 ) -> tuple[DataLoader, Optional[DataLoader]]:
     """
     Create PyTorch DataLoaders for training and validation.
@@ -418,15 +419,20 @@ def create_data_loaders(
     """
     # Check if dataset is an IterableDataset (streaming mode)
     is_iterable = isinstance(train_dataset, IterableDataset)
+
+    # Shuffle training dataset
+    train_dataset = train_dataset.shuffle(buffer_size=10000, seed=42)
     
     # Create training data loader
     # Note: IterableDataset doesn't support shuffle, so we skip it for streaming mode
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
-        shuffle=not is_iterable,  # Only shuffle if not streaming
-        num_workers=num_workers if not is_iterable else 0,  # IterableDataset needs num_workers=0
-        pin_memory=True  # Faster GPU transfer
+        shuffle=not is_iterable,
+        num_workers=num_workers ## if not is_iterable else 0,  # IterableDataset needs num_workers=0
+        pin_memory=True,    
+        prefetch_factor=2,
+        persistent_workers=True, 
     )
     
     # Create validation data loader (if provided)
@@ -435,11 +441,20 @@ def create_data_loaders(
         is_val_iterable = isinstance(val_dataset, IterableDataset)
         val_loader = DataLoader(
             val_dataset,
-            batch_size=batch_size,
-            shuffle=False,  # Don't shuffle validation data
-            num_workers=num_workers if not is_val_iterable else 0,
-            pin_memory=True
+            batch_size=64,          # ← Can be larger (no gradients stored)
+            shuffle=False,          # ← No shuffling needed
+            num_workers=4,          # ← Same
+            pin_memory=True,        # ← Same
+            prefetch_factor=2,      # ← Same
+            persistent_workers=True # ← Same
         )
+        # val_loader = DataLoader(
+        #     val_dataset,
+        #     batch_size=batch_size,
+        #     shuffle=False,  # Don't shuffle validation data
+        #     num_workers=num_workers if not is_val_iterable else 0,
+        #     pin_memory=True
+        # )
     
     return train_loader, val_loader
 

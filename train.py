@@ -9,6 +9,7 @@ This script ties everything together:
 """
 
 import torch
+import torch.nn.functional as F
 import argparse
 from pathlib import Path
 from datetime import datetime
@@ -20,6 +21,56 @@ from device import get_best_device, get_device_info
 from config import GPTConfig, TrainingConfig, DataConfig
 from learning_rate import get_lr
 
+def save_checkpoint(checkpoint_path, epoch, total_batches, model, optimizer, scheduler, 
+                   gpt_config, training_config, data_config, train_loss, val_loss, lr):
+    """Save training checkpoint."""
+    torch.save({
+        'epoch': epoch,
+        'total_batches': total_batches,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
+        'gpt_config': gpt_config,
+        'training_config': training_config,
+        'data_config': data_config,
+        'train_loss': train_loss,
+        'val_loss': val_loss,
+        'learning_rate': lr,
+    }, checkpoint_path)
+
+def evaluate_validation(model, val_loader, device):
+    """Evaluate model on validation set."""
+    model.eval()
+    total_loss = 0.0
+    total_tokens = 0
+    
+    print("  Running validation...")
+    with torch.no_grad():
+        for batch_idx, (input_ids, target_ids) in enumerate(val_loader):
+            input_ids = input_ids.to(device)
+            target_ids = target_ids.to(device)
+            
+            # Forward pass
+            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                logits = model(input_ids)
+                loss = F.cross_entropy(
+                    logits.reshape(-1, logits.size(-1)),
+                    target_ids.reshape(-1),
+                    reduction='sum'
+                )
+            
+            # Count non-padding tokens
+            num_tokens = (target_ids != 0).sum().item()
+            total_loss += loss.item()
+            total_tokens += num_tokens
+            
+            if batch_idx >= 100:  # Evaluate on ~100 batches for speed
+                break
+    
+    model.train()
+    avg_loss = total_loss / total_tokens if total_tokens > 0 else float('inf')
+
+    return avg_loss
 
 def main():
     """Main training function."""
@@ -32,42 +83,42 @@ def main():
     parser = argparse.ArgumentParser(description="Train GPT on SYNTH dataset")
     
     # Model architecture arguments
-    parser.add_argument("--d_model", type=int, default=gpt_config.d_model,
-                       help=f"Model dimension (default: {gpt_config.d_model})")
-    parser.add_argument("--n_heads", type=int, default=gpt_config.n_heads,
-                       help=f"Number of attention heads (default: {gpt_config.n_heads})")
-    parser.add_argument("--n_layers", type=int, default=gpt_config.n_layers,
-                       help=f"Number of transformer layers (default: {gpt_config.n_layers})")
-    parser.add_argument("--max_length", type=int, default=gpt_config.max_length,
-                       help=f"Maximum sequence length (default: {gpt_config.max_length})")
+    # parser.add_argument("--d_model", type=int, default=gpt_config.d_model,
+    #                    help=f"Model dimension (default: {gpt_config.d_model})")
+    # parser.add_argument("--n_heads", type=int, default=gpt_config.n_heads,
+    #                    help=f"Number of attention heads (default: {gpt_config.n_heads})")
+    # parser.add_argument("--n_layers", type=int, default=gpt_config.n_layers,
+    #                    help=f"Number of transformer layers (default: {gpt_config.n_layers})")
+    # parser.add_argument("--max_length", type=int, default=gpt_config.max_length,
+    #                    help=f"Maximum sequence length (default: {gpt_config.max_length})")
     
-    # Training arguments
-    parser.add_argument("--batch_size", type=int, default=training_config.batch_size,
-                       help=f"Batch size for training (default: {training_config.batch_size})")
-    parser.add_argument("--epochs", type=int, default=training_config.epochs,
-                       help=f"Number of training epochs (default: {training_config.epochs})")
-    parser.add_argument("--learning_rate", type=float, default=training_config.lr_config.max_lr,
-                       help=f"Learning rate (default: {training_config.lr_config.max_lr})")
-    parser.add_argument("--save_dir", type=str, default=training_config.save_dir,
-                       help=f"Directory to save model checkpoints (default: {training_config.save_dir})")
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=training_config.gradient_accumulation_steps,
-                       help=f"Number of steps to accumulate gradients (default: {training_config.gradient_accumulation_steps}, effective_batch_size = batch_size * gradient_accumulation_steps)")
+    # # Training arguments
+    # parser.add_argument("--batch_size", type=int, default=training_config.batch_size,
+    #                    help=f"Batch size for training (default: {training_config.batch_size})")
+    # parser.add_argument("--epochs", type=int, default=training_config.epochs,
+    #                    help=f"Number of training epochs (default: {training_config.epochs})")
+    # parser.add_argument("--learning_rate", type=float, default=training_config.lr_config.max_lr,
+    #                    help=f"Learning rate (default: {training_config.lr_config.max_lr})")
+    # parser.add_argument("--save_dir", type=str, default=training_config.save_dir,
+    #                    help=f"Directory to save model checkpoints (default: {training_config.save_dir})")
+    # parser.add_argument("--gradient_accumulation_steps", type=int, default=training_config.gradient_accumulation_steps,
+    #                    help=f"Number of steps to accumulate gradients (default: {training_config.gradient_accumulation_steps}, effective_batch_size = batch_size * gradient_accumulation_steps)")
     
-    # Data arguments
-    parser.add_argument("--max_samples", type=int, default=data_config.max_samples,
-                       help=f"Maximum number of samples to use (default: {data_config.max_samples}, None = all)")
-    parser.add_argument("--streaming", dest="streaming", action="store_const", const=True, default=data_config.streaming,
-                       help=f"Use streaming mode for large datasets (default: {data_config.streaming})")
-    parser.add_argument("--no-streaming", dest="streaming", action="store_const", const=False,
-                       help="Disable streaming mode (downloads entire dataset)")
-    parser.add_argument("--timeout", type=int, default=data_config.timeout,
-                       help=f"Timeout in seconds for dataset download (default: {data_config.timeout})")
-    parser.add_argument("--num-retries", type=int, default=data_config.num_retries,
-                       help=f"Number of retry attempts on connection failure (default: {data_config.num_retries})")
-    parser.add_argument("--text_field", type=str, default=data_config.text_field,
-                       help=f"Which field to use from dataset (default: {data_config.text_field})")
+    # # Data arguments
+    # parser.add_argument("--max_samples", type=int, default=data_config.max_samples,
+    #                    help=f"Maximum number of samples to use (default: {data_config.max_samples}, None = all)")
+    # parser.add_argument("--streaming", dest="streaming", action="store_const", const=True, default=data_config.streaming,
+    #                    help=f"Use streaming mode for large datasets (default: {data_config.streaming})")
+    # parser.add_argument("--no-streaming", dest="streaming", action="store_const", const=False,
+    #                    help="Disable streaming mode (downloads entire dataset)")
+    # parser.add_argument("--timeout", type=int, default=data_config.timeout,
+    #                    help=f"Timeout in seconds for dataset download (default: {data_config.timeout})")
+    # parser.add_argument("--num-retries", type=int, default=data_config.num_retries,
+    #                    help=f"Number of retry attempts on connection failure (default: {data_config.num_retries})")
+    # parser.add_argument("--text_field", type=str, default=data_config.text_field,
+    #                    help=f"Which field to use from dataset (default: {data_config.text_field})")
     
-    args = parser.parse_args()
+    # args = parser.parse_args()
     
     # Set device (use GPU if available)
     device = get_best_device()
@@ -99,21 +150,46 @@ def main():
         print(f"✓ Loaded training dataset (streaming mode - length unknown)")
     print()
     
+    # Load validation dataset
+    print("Loading SYNTH validation dataset...")
+    val_dataset = load_synth_dataset(
+        tokenizer=tokenizer,
+        max_length=data_config.max_length,
+        split="validation",
+        streaming=data_config.streaming,
+        max_samples=data_config.max_samples // 10 if data_config.max_samples else None,  # Use 10% of training samples for validation
+        text_field=data_config.text_field,
+        num_retries=data_config.num_retries,
+        timeout=data_config.timeout
+    )
+    try:
+        print(f"✓ Loaded {len(val_dataset)} validation samples")
+    except TypeError:
+        print(f"✓ Loaded validation dataset (streaming mode - length unknown)")
+    print()
+    
     # Create data loaders
     print("Creating data loaders...")
     # Determine number of workers (0 for IterableDataset/streaming, otherwise use config)
-    num_workers = 0 if args.streaming else (data_config.num_workers if device.type == "cuda" else 0)
+    num_workers = 0 if data_config.streaming else (data_config.num_workers if device.type == "cuda" else 0)
     
-    train_loader, _ = create_data_loaders(
+    train_loader, val_loader = create_data_loaders(
         train_dataset=train_dataset,
-        batch_size=args.batch_size,
-        num_workers=num_workers
+        val_dataset=val_dataset,
+        batch_size=training_config.batch_size,
+        num_workers=num_workers,
+        # prefetch_factor=2,
+        # persistent_workers=True,
     )
     # Note: DataLoaders with IterableDataset don't support len()
     try:
         print(f"✓ Created train loader with {len(train_loader)} batches")
     except TypeError:
         print(f"✓ Created train loader (streaming mode - batch count unknown)")
+    try:
+        print(f"✓ Created val loader with {len(val_loader)} batches")
+    except TypeError:
+        print(f"✓ Created val loader (streaming mode - batch count unknown)")
     print()
     
     # Create model configuration (architecture only)
@@ -178,7 +254,8 @@ def main():
         model.parameters(), 
         lr=1.0, # Set to 1.0 so LambdaLR can scale it properly
         weight_decay=training_config.weight_decay,
-        betas=(training_config.beta1, training_config.beta2)
+        betas=(training_config.beta1, training_config.beta2),
+        eps=training_config.eps
     )
     
     # Create learning rate scheduler
@@ -198,6 +275,7 @@ def main():
     # Track total batch count across epochs for checkpoint naming
     total_batches = 0
     checkpoint_interval = 50000  # Save checkpoint every 50k batches
+    best_val_loss = float('inf')  # Track best validation loss
     
     for epoch in range(training_config.epochs):
         print(f"\nEpoch {epoch + 1}/{training_config.epochs}")
@@ -218,9 +296,17 @@ def main():
         )
         
         total_batches += batches_processed
+
+        # Evaluate on validation set if available
+        val_loss = None
+        if val_loader is not None:
+            print("\nEvaluating on validation set...")
+            val_loss = evaluate_validation(model, val_loader, device)
         
         print(f"\nEpoch {epoch + 1} completed!")
         print(f"  Average training loss: {train_loss:.4f}")
+        if val_loss is not None:
+            print(f"  Average validation loss: {val_loss:.4f}")
         print(f"  Total batches processed: {total_batches:,}")
         
         # Save checkpoint at end of epoch
@@ -230,25 +316,50 @@ def main():
         checkpoint_folder_name = f"data-{max_samples_str}-batch-{total_batches}-{timestamp}"
         checkpoint_folder = save_dir / checkpoint_folder_name
         checkpoint_folder.mkdir(parents=True, exist_ok=True)
-        
-        # Save checkpoint file inside the folder
-        checkpoint_file = checkpoint_folder / "checkpoint.pt"
-        torch.save({
-            'epoch': epoch + 1,
-            'total_batches': total_batches,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'gpt_config': gpt_config,  # Save GPTConfig (model architecture)
-            'training_config': training_config,
-            'data_config': data_config,
-            'train_loss': train_loss,
-        }, checkpoint_file)
-        print(f"  Saved checkpoint to {checkpoint_file}")
-    
-    print("\n" + "=" * 60)
-    print("Training complete!")
-    print(f"Checkpoints saved in: {save_dir}")
 
+        # Save regular epoch checkpoint (always)
+        checkpoint_file = checkpoint_folder / "checkpoint.pt"
+        save_checkpoint(checkpoint_file, 
+                epoch + 1, 
+                total_batches, 
+                model, 
+                optimizer, 
+                scheduler,
+                gpt_config, 
+                training_config, 
+                data_config, 
+                train_loss, 
+                val_loss, 
+                optimizer.param_groups[0]['lr']
+            )
+        print(f"  Saved epoch checkpoint to {checkpoint_file}")
+
+        # Save best checkpoint (only if improved and validation loss is available)
+        if val_loss is not None and val_loss < best_val_loss:
+            best_val_loss = val_loss
+            # Save in main save_dir, NOT inside epoch folder
+            best_checkpoint_file = save_dir / "checkpoint_best.pt"
+            save_checkpoint(best_checkpoint_file, 
+                epoch + 1, 
+                total_batches, 
+                model, 
+                optimizer, 
+                scheduler,
+                gpt_config, 
+                training_config, 
+                data_config, 
+                train_loss, 
+                val_loss, 
+                optimizer.param_groups[0]['lr']
+            )
+            print(f"  ✓ New best validation loss: {val_loss:.4f}!")
+            print(f"  ✓ Saved best checkpoint to {best_checkpoint_file}")
+        elif val_loss is not None:
+            print(f"  Val loss did not improve (best: {best_val_loss:.4f})")
+    
+        print("\n" + "=" * 60)
+        print("Training complete!")
+        print(f"Checkpoints saved in: {save_dir}")
 
 if __name__ == "__main__":
     main()

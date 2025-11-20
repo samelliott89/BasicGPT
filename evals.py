@@ -61,7 +61,6 @@ def load_model_from_checkpoint(checkpoint_path: str, device: torch.device):
         config = GPTConfig(**config)
     # If it's already a GPTConfig object, use it directly
     
-    
     model = GPT(config)
     model.load_state_dict(checkpoint['model_state_dict'])
     model = model.to(device)
@@ -335,7 +334,7 @@ def evaluate_model(
     eval_dataset = load_synth_dataset(
         tokenizer=tokenizer,
         max_length=eval_config.max_length,
-        split="train",
+        split="validation",
         streaming=True,
         max_samples=eval_config.eval_samples,
         text_field="synthetic_answer"
@@ -364,7 +363,7 @@ def evaluate_model(
     eval_dataset = load_synth_dataset(
         tokenizer=tokenizer,
         max_length=eval_config.max_length,
-        split="train",
+        split="validation",
         streaming=True,
         max_samples=eval_config.eval_samples,
         text_field="synthetic_answer"
