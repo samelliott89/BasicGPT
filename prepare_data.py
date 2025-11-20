@@ -13,9 +13,10 @@ from tokenizer import Tokenizer
 from typing import Optional
 import time
 import os
-from gpt import GPTConfig
+from config import GPTConfig, DataConfig
 
-config = GPTConfig()
+gpt_config = GPTConfig()
+data_config = DataConfig()
 
 class SYNTHDataset(Dataset):
 #     """
@@ -36,7 +37,7 @@ class SYNTHDataset(Dataset):
         self,
         dataset,
         tokenizer: Tokenizer,
-        max_length: int = config.max_length,
+        max_length: int = data_config.max_length,
         text_field: str = "synthetic_answer"
     ):
 #         """
@@ -142,8 +143,10 @@ class SYNTHIterableDataset(IterableDataset):
         self,
         dataset,
         tokenizer: Tokenizer,
-        max_length: int = config.max_length,
-        text_field: str = "synthetic_answer"
+        max_length: int = data_config.max_length,
+        text_field: str = "synthetic_answer",
+        include_reasoning: bool = False,
+        filter_english_only: bool = True
     ):
         """
         Initialize the iterable dataset.
@@ -153,11 +156,14 @@ class SYNTHIterableDataset(IterableDataset):
             tokenizer: Our Tokenizer instance for encoding text
             max_length: Maximum sequence length (context window size)
             text_field: Which field from the dataset to use as text
+            include_reasoning: If True, include reasoning steps in training data
         """
         self.dataset = dataset
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.text_field = text_field
+        self.include_reasoning = include_reasoning
+        self.filter_english_only = filter_english_only
     
     def _process_sample(self, sample: dict) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
         """
@@ -172,12 +178,35 @@ class SYNTHIterableDataset(IterableDataset):
         # Combine multiple fields if needed for richer context
         if self.text_field == "synthetic_answer":
             query = sample.get("query", "")
-            if query:
-                text = f"{query}\n\n{text}"
+            reasoning = sample.get("synthetic_reasoning", "") if self.include_reasoning else ""
+            answer = text
+            
+            # Build text based on available fields and include_reasoning flag
+            if query and reasoning and answer:
+                text = f"{query}\n\n{reasoning}\n\n{answer}"
+            elif query and answer:
+                text = f"{query}\n\n{answer}"
+            elif answer:
+                text = answer
+            elif query:
+                text = query
         
         # Skip empty samples
         if not text or len(text.strip()) == 0:
             return None
+        
+        # Filter for English-only if enabled (using dataset's language field)
+        if self.filter_english_only:
+            sample_language = sample.get('language')
+            if sample_language:
+                # Dataset uses ISO language codes: 'en', 'de', 'fr', etc.
+                # Only keep English samples
+                if str(sample_language).lower() != 'en':
+                    return None  # Skip non-English samples
+            else:
+                # If no language field, warn but continue (dataset might not have it)
+                # In practice, SYNTH dataset should have this field
+                pass
         
         # Tokenize the text
         tokens = self.tokenizer.encode(text)
@@ -220,13 +249,15 @@ class SYNTHIterableDataset(IterableDataset):
 
 def load_synth_dataset(
     tokenizer: Tokenizer,
-    max_length: int = config.max_length,
+    max_length: int = data_config.max_length,
     split: str = "train",
-    streaming: bool = True,  # Default to streaming to avoid large downloads
+    streaming: bool = data_config.streaming,  # Default to streaming to avoid large downloads
     text_field: str = "synthetic_answer",
-    num_retries: int = 3,
-    timeout: int = 300,
-    max_samples: int = config.max_sample_size,
+    include_reasoning: bool = data_config.include_reasoning,
+    filter_english_only: bool = data_config.filter_english_only,
+    num_retries: int = data_config.num_retries,
+    timeout: int = data_config.timeout,
+    max_samples: int = data_config.max_samples
 ) -> SYNTHDataset:
     """
     Load the SYNTH dataset from Hugging Face and prepare it for training.
@@ -242,6 +273,7 @@ def load_synth_dataset(
                   helps avoid timeout issues.
         max_samples: Maximum number of samples to load (None = all)
         text_field: Which field to use as text source
+        include_reasoning: If True, include reasoning steps in training data
         num_retries: Number of times to retry on failure
         timeout: Timeout in seconds for download operations
         
@@ -255,6 +287,8 @@ def load_synth_dataset(
     print(f"  Split: {split}")
     print(f"  Streaming: {streaming} (recommended for large datasets)")
     print(f"  Max samples: {max_samples if max_samples else 'all'}")
+    print(f"  Include reasoning: {include_reasoning}")
+    print(f"  Filter English only: {filter_english_only}")
     print(f"  Timeout: {timeout} seconds")
     print()
     
@@ -343,7 +377,9 @@ def load_synth_dataset(
             dataset=dataset,
             tokenizer=tokenizer,
             max_length=max_length,
-            text_field=text_field
+            text_field=text_field,
+            include_reasoning=include_reasoning,
+            filter_english_only=filter_english_only
         )
     else:
         print("Using regular Dataset (pre-tokenizing all samples)...")
@@ -360,8 +396,8 @@ def load_synth_dataset(
 def create_data_loaders(
     train_dataset,
     val_dataset = None,
-    batch_size: int = 32,
-    num_workers: int = 4
+    batch_size: int = 16,  # Default batch size (should match TrainingConfig default)
+    num_workers: int = data_config.num_dataset_workers
 ) -> tuple[DataLoader, Optional[DataLoader]]:
     """
     Create PyTorch DataLoaders for training and validation.

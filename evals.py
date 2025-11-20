@@ -21,16 +21,46 @@ from config import GPTConfig, EvaluationConfig, GenerationConfig
 from prepare_data import load_synth_dataset, create_data_loaders
 
 
+
 def load_model_from_checkpoint(checkpoint_path: str, device: torch.device):
-    """Load model from checkpoint."""
+    """
+    Load model from checkpoint.
+    
+    Supports both:
+    - Folder path: /path/to/checkpoint-folder/ (will look for checkpoint.pt inside)
+    - File path: /path/to/checkpoint.pt (legacy support)
+    """
+    checkpoint_path_obj = Path(checkpoint_path)
+    
+    # If it's a directory, look for checkpoint.pt inside
+    if checkpoint_path_obj.is_dir():
+        checkpoint_file = checkpoint_path_obj / "checkpoint.pt"
+        if not checkpoint_file.exists():
+            raise FileNotFoundError(f"Checkpoint file not found in folder: {checkpoint_file}")
+        checkpoint_path = str(checkpoint_file)
+        checkpoint_folder = checkpoint_path_obj
+    else:
+        # It's a file path (legacy support)
+        checkpoint_file = checkpoint_path_obj
+        checkpoint_folder = checkpoint_path_obj.parent
+    
     print(f"Loading checkpoint from {checkpoint_path}...")
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
-    config = checkpoint.get('config')
+    # Try new format first (gpt_config object)
+    config = checkpoint.get('gpt_config')
     if config is None:
-        config = GPTConfig()
+        # Try legacy format (config key)
+        config = checkpoint.get('config')
+        if config is None:
+            config = GPTConfig()
+        elif isinstance(config, dict):
+            config = GPTConfig(**config)
     elif isinstance(config, dict):
+        # If it's a dict (from state_dict), reconstruct
         config = GPTConfig(**config)
+    # If it's already a GPTConfig object, use it directly
+    
     
     model = GPT(config)
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -41,7 +71,7 @@ def load_model_from_checkpoint(checkpoint_path: str, device: torch.device):
     loss = checkpoint.get('train_loss', 'unknown')
     
     print(f"✓ Loaded checkpoint from epoch {epoch} (train loss: {loss})")
-    return model, config, epoch
+    return model, config, epoch, checkpoint_folder
 
 
 def calculate_perplexity(model: GPT, data_loader, device: torch.device) -> float:
@@ -175,23 +205,28 @@ def calculate_accuracy(model: GPT, data_loader, device: torch.device, top_k: int
                 logits = logits[:, :min_len, :]
                 target_ids = target_ids[:, :min_len]
             
-            # Get predictions for last position (next token prediction)
-            # Shape: (batch_size, seq_length, vocab_size)
-            last_logits = logits[:, -1, :]  # (batch_size, vocab_size)
-            last_targets = target_ids[:, -1]  # (batch_size,)
+            # FIX: Evaluate ALL positions, not just the last one
+            # Flatten to (batch_size * seq_length, vocab_size)
+            logits_flat = logits.reshape(-1, logits.size(-1))
+            targets_flat = target_ids.reshape(-1)
             
-            # Top-1 accuracy
-            predictions = torch.argmax(last_logits, dim=-1)
-            correct += (predictions == last_targets).sum().item()
-            total += last_targets.size(0)
+            # Create mask to ignore padding tokens (assuming 0 is padding)
+            mask = (targets_flat != 0)
+            
+            # Get predictions for all positions
+            predictions = torch.argmax(logits_flat, dim=-1)
+            
+            # Top-1 accuracy (only count non-padding tokens)
+            correct += ((predictions == targets_flat) & mask).sum().item()
+            total += mask.sum().item()
             
             # Top-k accuracy
             if top_k > 1:
-                top_k_preds = torch.topk(last_logits, k=min(top_k, last_logits.size(-1)), dim=-1)[1]
-                # Check if target is in top-k predictions for each sample
-                for i in range(last_targets.size(0)):
-                    if last_targets[i] in top_k_preds[i]:
-                        top_k_correct += 1
+                top_k_preds = torch.topk(logits_flat, k=min(top_k, logits_flat.size(-1)), dim=-1)[1]
+                # Check if target is in top-k for each position
+                targets_expanded = targets_flat.unsqueeze(1).expand_as(top_k_preds)
+                top_k_matches = (top_k_preds == targets_expanded).any(dim=1)
+                top_k_correct += (top_k_matches & mask).sum().item()
             
             if (batch_idx + 1) % 100 == 0:
                 print(f"  Processed {batch_idx + 1} batches...")
@@ -261,7 +296,8 @@ def evaluate_model(
     checkpoint_path: str,
     tokenizer: Tokenizer,
     device: torch.device,
-    eval_config: EvaluationConfig = None
+    eval_config: EvaluationConfig = None,
+    checkpoint_folder: Path = None
 ):
     """
     Comprehensive model evaluation.
@@ -280,8 +316,11 @@ def evaluate_model(
     print("=" * 60)
     print()
     
-    # Load model
-    model, config, epoch = load_model_from_checkpoint(checkpoint_path, device)
+    # Load model (will return checkpoint_folder if not provided)
+    model, config, epoch, loaded_checkpoint_folder = load_model_from_checkpoint(checkpoint_path, device)
+    # Use provided checkpoint_folder or the one from loading
+    if checkpoint_folder is None:
+        checkpoint_folder = loaded_checkpoint_folder
     
     # Verify vocab_size matches tokenizer
     if model.vocab_size != tokenizer.vocab_size:
@@ -375,12 +414,18 @@ def evaluate_model(
     print(f"Top-5 Accuracy: {accuracy_results.get('top_5_accuracy', 0):.2f}%")
     print("=" * 60)
     
+    # Get total_batches from checkpoint if available
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    total_batches = checkpoint.get('total_batches', 'unknown')
+    
     return {
         "perplexity": perplexity,
         "loss": avg_loss,
         "accuracy": accuracy_results['accuracy'],
         "top_5_accuracy": accuracy_results.get('top_5_accuracy', 0),
-        "generations": generation_results
+        "generations": generation_results,
+        "epoch": epoch,
+        "total_batches": total_batches,
     }
 
 
@@ -436,22 +481,34 @@ def main():
     # Initialize tokenizer
     tokenizer = Tokenizer(encoding_name="cl100k_base")
     
+    # Determine checkpoint folder (handle both folder and file paths)
+    checkpoint_path_obj = Path(args.checkpoint)
+    if checkpoint_path_obj.is_dir():
+        checkpoint_folder = checkpoint_path_obj
+        checkpoint_file_path = str(checkpoint_folder / "checkpoint.pt")
+    else:
+        # Legacy: it's a file, use parent as folder
+        checkpoint_folder = checkpoint_path_obj.parent
+        checkpoint_file_path = args.checkpoint
+    
     # Run evaluation
     results = evaluate_model(
-        checkpoint_path=args.checkpoint,
+        checkpoint_path=checkpoint_file_path,
         tokenizer=tokenizer,
         device=device,
-        eval_config=eval_config
+        eval_config=eval_config,
+        checkpoint_folder=checkpoint_folder
     )
     
-    # Save results
-    checkpoint_path = Path(args.checkpoint)
-    results_file = checkpoint_path.parent / f"eval_results_epoch_{results.get('epoch', 'unknown')}.txt"
+    # Save results in the checkpoint folder
+    results_file = checkpoint_folder / "eval_results.txt"
     
     with open(results_file, 'w') as f:
         f.write("Evaluation Results\n")
         f.write("=" * 60 + "\n")
         f.write(f"Checkpoint: {args.checkpoint}\n")
+        f.write(f"Epoch: {results.get('epoch', 'unknown')}\n")
+        f.write(f"Total Batches: {results.get('total_batches', 'unknown')}\n")
         f.write(f"Perplexity: {results['perplexity']:.2f}\n")
         f.write(f"Loss: {results['loss']:.4f}\n")
         f.write(f"Top-1 Accuracy: {results['accuracy']:.2f}%\n")

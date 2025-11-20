@@ -11,19 +11,22 @@ This script ties everything together:
 import torch
 import argparse
 from pathlib import Path
+from datetime import datetime
 
 from tokenizer import Tokenizer
 from gpt import GPT, train_epoch, evaluate
 from prepare_data import load_synth_dataset, create_data_loaders
 from device import get_best_device, get_device_info
 from config import GPTConfig, TrainingConfig, DataConfig
+from learning_rate import get_lr
+
 
 def main():
     """Main training function."""
     # Load default configurations
     training_config = TrainingConfig()
-    gpt_config = training_config.gpt_config
-    data_config = training_config.data_config
+    gpt_config = GPTConfig()
+    data_config = DataConfig()
     
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Train GPT on SYNTH dataset")
@@ -43,10 +46,12 @@ def main():
                        help=f"Batch size for training (default: {training_config.batch_size})")
     parser.add_argument("--epochs", type=int, default=training_config.epochs,
                        help=f"Number of training epochs (default: {training_config.epochs})")
-    parser.add_argument("--learning_rate", type=float, default=training_config.learning_rate,
-                       help=f"Learning rate (default: {training_config.learning_rate})")
+    parser.add_argument("--learning_rate", type=float, default=training_config.lr_config.max_lr,
+                       help=f"Learning rate (default: {training_config.lr_config.max_lr})")
     parser.add_argument("--save_dir", type=str, default=training_config.save_dir,
                        help=f"Directory to save model checkpoints (default: {training_config.save_dir})")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=training_config.gradient_accumulation_steps,
+                       help=f"Number of steps to accumulate gradients (default: {training_config.gradient_accumulation_steps}, effective_batch_size = batch_size * gradient_accumulation_steps)")
     
     # Data arguments
     parser.add_argument("--max_samples", type=int, default=data_config.max_samples,
@@ -111,16 +116,24 @@ def main():
         print(f"✓ Created train loader (streaming mode - batch count unknown)")
     print()
     
-    # Create model configuration
-    config = GPTConfig(
+    # Create model configuration (architecture only)
+    gpt_config = GPTConfig(
         vocab_size=tokenizer.vocab_size,
         d_model=args.d_model,
         n_heads=args.n_heads,
         n_layers=args.n_layers,
-        max_length=args.max_length,
-        learning_rate=args.learning_rate,
-        epochs=args.epochs
+        max_length=args.max_length
     )
+    
+    # Update training configuration with command line arguments
+    training_config.batch_size = args.batch_size
+    training_config.epochs = args.epochs
+    training_config.lr_config.max_lr = args.learning_rate
+    training_config.save_dir = args.save_dir
+    training_config.gradient_accumulation_steps = args.gradient_accumulation_steps
+    
+    # Calculate effective batch size
+    effective_batch_size = training_config.batch_size * training_config.gradient_accumulation_steps
     
     # Create model
     print("Creating GPT model...")
@@ -154,52 +167,83 @@ def main():
     print(f"  Number of layers: {gpt_config.n_layers}")
     print(f"  Number of heads: {gpt_config.n_heads}")
     print(f"  Max sequence length: {gpt_config.max_length}")
+    print(f"  Batch size: {training_config.batch_size}")
+    print(f"  Gradient accumulation steps: {training_config.gradient_accumulation_steps}")
+    print(f"  Effective batch size: {effective_batch_size}")
     print()
     
     # Create optimizer with weight decay for regularization
     # Using AdamW (Adam with weight decay) is better for large models
     optimizer = torch.optim.AdamW(
         model.parameters(), 
-        lr=args.learning_rate,
+        lr=1.0, # Set to 1.0 so LambdaLR can scale it properly
         weight_decay=training_config.weight_decay,
         betas=(training_config.beta1, training_config.beta2)
     )
     
+    # Create learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer,
+        lr_lambda=lambda step: get_lr(step, training_config.lr_config)
+    )
+    
     # Create save directory
-    save_dir = Path(args.save_dir)
+    save_dir = Path(training_config.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     
     # Training loop
     print("Starting training...")
     print("=" * 60)
     
-    for epoch in range(args.epochs):
-        print(f"\nEpoch {epoch + 1}/{args.epochs}")
+    # Track total batch count across epochs for checkpoint naming
+    total_batches = 0
+    checkpoint_interval = 50000  # Save checkpoint every 50k batches
+    
+    for epoch in range(training_config.epochs):
+        print(f"\nEpoch {epoch + 1}/{training_config.epochs}")
         print("-" * 60)
         
         # Train for one epoch
-        train_loss = train_epoch(
+        train_loss, batches_processed = train_epoch(
             model=model,
             train_loader=train_loader,
             optimizer=optimizer,
+            scheduler=scheduler,
             device=device,
             epoch=epoch,
-            scaler=scaler
+            scaler=scaler,
+            save_dir=save_dir,
+            total_batches=total_batches,
+            gradient_accumulation_steps=training_config.gradient_accumulation_steps
         )
+        
+        total_batches += batches_processed
         
         print(f"\nEpoch {epoch + 1} completed!")
         print(f"  Average training loss: {train_loss:.4f}")
+        print(f"  Total batches processed: {total_batches:,}")
         
-        # Save checkpoint
-        checkpoint_path = save_dir / f"checkpoint_epoch_{epoch + 1}.pt"
+        # Save checkpoint at end of epoch
+        timestamp = datetime.now().strftime("%m-%d-%Y-%H-%M")
+        # Create folder for this checkpoint
+        max_samples_str = f"{data_config.max_samples // 1_000_000}m" if data_config.max_samples else "all"
+        checkpoint_folder_name = f"data-{max_samples_str}-batch-{total_batches}-{timestamp}"
+        checkpoint_folder = save_dir / checkpoint_folder_name
+        checkpoint_folder.mkdir(parents=True, exist_ok=True)
+        
+        # Save checkpoint file inside the folder
+        checkpoint_file = checkpoint_folder / "checkpoint.pt"
         torch.save({
             'epoch': epoch + 1,
+            'total_batches': total_batches,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
-            'config': gpt_config,  # Save GPTConfig (model architecture)
+            'gpt_config': gpt_config,  # Save GPTConfig (model architecture)
+            'training_config': training_config,
+            'data_config': data_config,
             'train_loss': train_loss,
-        }, checkpoint_path)
-        print(f"  Saved checkpoint to {checkpoint_path}")
+        }, checkpoint_file)
+        print(f"  Saved checkpoint to {checkpoint_file}")
     
     print("\n" + "=" * 60)
     print("Training complete!")

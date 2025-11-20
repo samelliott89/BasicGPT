@@ -12,6 +12,7 @@ from gpt import GPT
 from config import GPTConfig, GenerationConfig
 
 
+
 def load_checkpoint(checkpoint_path: str, device: torch.device):
     """
     Load a model checkpoint.
@@ -29,16 +30,17 @@ def load_checkpoint(checkpoint_path: str, device: torch.device):
     # This is safe since we're loading our own checkpoint files
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
-    # Get config from checkpoint
-    config = checkpoint.get('config')
+    # Get config from checkpoint (try both 'gpt_config' and 'config' for compatibility)
+    config = checkpoint.get('gpt_config') or checkpoint.get('config')
     if config is None:
         print("Warning: No config found in checkpoint, using defaults")
         config = GPTConfig()
     elif isinstance(config, dict):
         # Convert dict to GPTConfig if needed
         config = GPTConfig(**config)
+    # If it's already a GPTConfig object, use it directly
     
-    # Create model
+    # Create model with the config
     model = GPT(config)
     model.load_state_dict(checkpoint['model_state_dict'])
     model = model.to(device)

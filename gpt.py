@@ -12,8 +12,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.checkpoint import checkpoint
 from tokenizer import Tokenizer
-from config import GPTConfig
+from config import GPTConfig, DataConfig, TrainingConfig
 
+gpt_config = GPTConfig()
+data_config = DataConfig()
+training_config = TrainingConfig()
 
 class GPT(nn.Module):
     """
@@ -227,10 +230,19 @@ class GPT(nn.Module):
                 
                 # Apply repetition penalty
                 if repetition_penalty != 1.0:
-                    # Get unique tokens in the generated sequence
-                    unique_tokens = torch.unique(generated)
-                    # Apply penalty to repeated tokens
-                    next_token_logits[0, unique_tokens] /= repetition_penalty
+                    # Look at recent tokens (last 50 tokens) to prevent immediate repetition
+                    # This is more effective than looking at all unique tokens
+                    recent_window = 50
+                    recent_tokens = generated[0, -recent_window:] if generated.shape[1] > recent_window else generated[0, :]
+                    # Get unique tokens in recent window
+                    unique_recent_tokens = torch.unique(recent_tokens)
+                    # Apply penalty to recently seen tokens
+                    next_token_logits[0, unique_recent_tokens] /= repetition_penalty
+                    
+                    # Also apply stronger penalty to the very last token to prevent immediate repetition
+                    if generated.shape[1] > 0:
+                        last_token = generated[0, -1].item()
+                        next_token_logits[0, last_token] /= (repetition_penalty * 1.5)  # Extra penalty for immediate repetition
                 
                 # Apply temperature
                 next_token_logits = next_token_logits / temperature
@@ -271,6 +283,15 @@ class GPT(nn.Module):
                 # Append to generated sequence
                 generated = torch.cat([generated, next_token], dim=1)
                 
+                # Check for repetitive patterns (same token repeated many times)
+                # This helps prevent issues like "!!!!!!!!!!!!!!!!"
+                if generated.shape[1] >= 10:  # Only check if we have enough tokens
+                    last_10_tokens = generated[0, -10:].tolist()
+                    # Check if last 8 tokens are all the same
+                    if len(set(last_10_tokens[-8:])) == 1:
+                        # Detected repetitive pattern, stop generation
+                        break
+                
                 # Stop if we've reached max_length
                 if generated.shape[1] >= self.max_length:
                     break
@@ -282,23 +303,35 @@ def train_epoch(
     model: GPT,
     train_loader,
     optimizer: optim.Optimizer,
+    scheduler: optim.lr_scheduler.LRScheduler,
     device: torch.device,
     epoch: int,
-    scaler=None
-) -> float:
+    scaler=None,
+    save_dir=None,
+    total_batches=0,
+    gradient_accumulation_steps: int = 1,
+) -> tuple[float, int]:
     """
-    Train the model for one epoch.
+    Train the model for one epoch with gradient accumulation support.
     
     Args:
         model: The GPT model
         train_loader: DataLoader for training data
         optimizer: Optimizer for updating weights
+        scheduler: Learning rate scheduler
         device: Device to run training on (CPU or GPU)
         epoch: Current epoch number
+        scaler: Optional gradient scaler for mixed precision
+        save_dir: Optional directory to save checkpoints
+        total_batches: Total batch count from previous epochs
+        gradient_accumulation_steps: Number of steps to accumulate gradients before optimizer step
         
     Returns:
-        Average training loss for this epoch
+        Tuple of (average training loss, number of batches processed)
     """
+    from datetime import datetime
+    import torch
+    
     model.train()  # Set model to training mode
     total_loss = 0.0
     num_batches = 0
@@ -324,7 +357,8 @@ def train_epoch(
                 targets_flat = target_ids.view(-1)  # (batch*seq,)
                 
                 # Calculate loss (cross-entropy for classification)
-                loss = F.cross_entropy(logits_flat, targets_flat)
+                # Scale loss by accumulation steps for correct gradient magnitude
+                loss = F.cross_entropy(logits_flat, targets_flat) / gradient_accumulation_steps
         else:
             logits = model(input_ids)  # (batch_size, seq_length, vocab_size)
             
@@ -333,28 +367,65 @@ def train_epoch(
             targets_flat = target_ids.view(-1)  # (batch*seq,)
             
             # Calculate loss (cross-entropy for classification)
-            loss = F.cross_entropy(logits_flat, targets_flat)
+            # Scale loss by accumulation steps for correct gradient magnitude
+            loss = F.cross_entropy(logits_flat, targets_flat) / gradient_accumulation_steps
         
-        # Backward pass: compute gradients
-        optimizer.zero_grad(set_to_none=True)  # Clear previous gradients (more efficient)
-        
+        # Backward pass: accumulate gradients
         if scaler is not None:
             # Mixed precision backward pass
             scaler.scale(loss).backward()
-            # Gradient clipping with scaler
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            scaler.step(optimizer)
-            scaler.update()
         else:
-            loss.backward()  # Compute gradients
-            # Optional: gradient clipping for stability
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()  # Update weights
+            loss.backward()  # Accumulate gradients
         
-        # Track loss
-        total_loss += loss.item()
+        # Only update weights every gradient_accumulation_steps batches
+        if (batch_idx + 1) % gradient_accumulation_steps == 0:
+            if scaler is not None:
+                # Gradient clipping with scaler
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                # Gradient clipping for stability
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()  # Update weights
+            
+            # Step the learning rate scheduler after optimizer step
+            scheduler.step()
+            
+            # Clear gradients after optimizer step
+            optimizer.zero_grad(set_to_none=True)
+        
+        # Track loss (unscaled for reporting)
+        total_loss += loss.item() * gradient_accumulation_steps
         num_batches += 1
+        
+        # Calculate current total batch count (across all epochs)
+        current_total_batches = total_batches + num_batches
+          
+        # Save checkpoint every checkpoint_interval batches
+        if save_dir is not None and current_total_batches % training_config.checkpoint_interval == 0:
+            timestamp = datetime.now().strftime("%m-%d-%Y-%H-%M")
+            # Create folder for this checkpoint
+            checkpoint_folder_name = f"data-{data_config.max_samples}-batch-{current_total_batches}-{timestamp}"
+            checkpoint_folder = save_dir / checkpoint_folder_name
+            checkpoint_folder.mkdir(parents=True, exist_ok=True)
+            
+            # Save checkpoint file inside the folder
+            checkpoint_file = checkpoint_folder / "checkpoint.pt"
+            print(f"Saving checkpoint to {checkpoint_folder_name}/checkpoint.pt")
+            torch.save({
+                'epoch': epoch + 1,
+                'total_batches': current_total_batches,
+                'batch_in_epoch': num_batches,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'gpt_config': gpt_config,
+                'training_config': training_config,
+                'data_config': data_config,
+                'train_loss': total_loss / num_batches,
+            }, checkpoint_file)
+            print(f"\n  💾 Saved checkpoint at batch {current_total_batches:,}: {checkpoint_file}")
         
         # Clear CUDA cache periodically to prevent fragmentation
         if device.type == "cuda" and (batch_idx + 1) % 100 == 0:
@@ -367,8 +438,8 @@ def train_epoch(
                 memory_allocated = torch.cuda.memory_allocated(device) / (1024**3)  # GB
                 memory_reserved = torch.cuda.memory_reserved(device) / (1024**3)  # GB
                 try:
-                    total_batches = len(train_loader)
-                    print(f"  Batch {batch_idx + 1}/{total_batches}, Loss: {loss.item():.4f}, "
+                    loader_length = len(train_loader)
+                    print(f"  Batch {batch_idx + 1}/{loader_length}, Loss: {loss.item():.4f}, "
                           f"GPU Memory: {memory_allocated:.2f}GB / {memory_reserved:.2f}GB")
                 except TypeError:
                     # IterableDataset doesn't support len()
@@ -376,14 +447,15 @@ def train_epoch(
                           f"GPU Memory: {memory_allocated:.2f}GB / {memory_reserved:.2f}GB")
             else:
                 try:
-                    total_batches = len(train_loader)
-                    print(f"  Batch {batch_idx + 1}/{total_batches}, Loss: {loss.item():.4f}")
+                    loader_length = len(train_loader)
+                    print(f"  Batch {batch_idx + 1}/{loader_length}, Loss: {loss.item():.4f}")
                 except TypeError:
                     # IterableDataset doesn't support len()
                     print(f"  Batch {batch_idx + 1}, Loss: {loss.item():.4f}")
     
+    # Calculate average loss
     avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
-    return avg_loss
+    return avg_loss, num_batches
 
 
 def evaluate(model: GPT, val_loader, device: torch.device) -> float:
@@ -419,8 +491,9 @@ def evaluate(model: GPT, val_loader, device: torch.device) -> float:
             total_loss += loss.item()
             num_batches += 1
     
+    # Calculate average loss
     avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
-    return avg_loss
+    return avg_loss, num_batches
 
 
 if __name__ == "__main__":

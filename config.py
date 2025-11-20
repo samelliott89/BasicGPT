@@ -6,8 +6,8 @@ of the GPT training pipeline.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
-
+from typing import Callable, Optional
+from learning_rate import LearningRateConfig
 
 @dataclass
 class GPTConfig:
@@ -17,7 +17,7 @@ class GPTConfig:
     This holds all the hyperparameters (settings) for the model structure.
     Using a dataclass makes it easy to pass around configuration.
     """
-    vocab_size: int = 100256  # Vocabulary size from tiktoken cl100k_base
+    vocab_size: int = 100277  # Vocabulary size from tiktoken cl100k_base
     d_model: int = 256  # Dimension of the model (embedding size)
     n_heads: int = 8  # Number of attention heads
     n_layers: int = 16  # Number of transformer layers
@@ -32,14 +32,16 @@ class DataConfig:
     
     Controls how data is loaded from the dataset and prepared for training.
     """
-    max_samples: Optional[int] = 2000000  # Maximum number of samples to use (None = all)
+    max_samples: Optional[int] = 5000000  # Maximum number of samples to use (None = all)
     max_length: int = 1024  # Maximum sequence length for tokenization
     text_field: str = "synthetic_answer"  # Which field to use from dataset
+    include_reasoning: bool = False  # Whether to include reasoning steps in training data
+    filter_english_only: bool = True  # Filter to only English samples (uses dataset's 'language' field)
     streaming: bool = True  # Use streaming mode for large datasets
     timeout: int = 300  # Timeout in seconds for dataset download
     num_retries: int = 3  # Number of retry attempts on connection failure
-    batch_size: int = 8  # Batch size for data loading
     num_workers: int = 0  # Number of parallel workers for data loading (0 for IterableDataset)
+    num_dataset_workers: int = 4  # Number of parallel workers for dataset loading
 
 
 @dataclass
@@ -53,13 +55,14 @@ class TrainingConfig:
     gpt_config: GPTConfig = field(default_factory=GPTConfig)
     
     # Training hyperparameters
-    batch_size: int = 64  # Batch size for training
-    learning_rate: float = 3e-4  # Learning rate for optimizer
-    epochs: int = 2  # Number of training epochs
+    batch_size: int = 32  # Batch size for training (optimized for 92GB VRAM with max_length=1024)
+    lr_config: LearningRateConfig = field(default_factory=LearningRateConfig)
+    epochs: int = 1  # Number of training epochs
     weight_decay: float = 0.01  # L2 regularization (for AdamW)
     beta1: float = 0.9  # Adam beta1 parameter
     beta2: float = 0.95  # Adam beta2 parameter
     max_grad_norm: float = 1.0  # Gradient clipping max norm
+    gradient_accumulation_steps: int = 4  # Number of steps to accumulate gradients (1 = no accumulation, effective_batch_size = batch_size * gradient_accumulation_steps = 32 * 4 = 128)
     
     # Data configuration
     data_config: DataConfig = field(default_factory=DataConfig)
@@ -70,6 +73,7 @@ class TrainingConfig:
     print_every_n_batches: int = 50  # Print progress every N batches
     use_mixed_precision: bool = True  # Use FP16/BF16 mixed precision training
     use_gradient_checkpointing: bool = False  # Use gradient checkpointing to save memory
+    checkpoint_interval: int = 10000  # Save checkpoint every N batches
 
 
 @dataclass
@@ -83,7 +87,7 @@ class GenerationConfig:
     temperature: float = 0.8  # Temperature for sampling (lower = more focused, higher = more random)
     top_k: int = 50  # Top-k sampling: only consider top k tokens (0 = disabled)
     top_p: float = 0.9  # Top-p (nucleus) sampling: cumulative probability threshold (0.0 = disabled)
-    repetition_penalty: float = 1.1  # Penalty for repeating tokens (>1.0 reduces repetition)
+    repetition_penalty: float = 1.2  # Penalty for repeating tokens (>1.0 reduces repetition, higher = less repetition)
 
 
 @dataclass
