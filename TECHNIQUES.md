@@ -188,3 +188,21 @@ Here's rough impact on your loss 3.69 → target:
 **The unsexy truth:** Most improvement comes from **training longer on more/better data** with **well-tuned basics**. Architecture tweaks are icing on the cake.
 
 What's your current training setup? (tokens seen, learning rate, batch size, dataset)
+
+
+**Vast.ai**
+
+```
+ssh -p 32028 -i ~/.ssh/id_ed25519 root@203.154.134.53
+```
+
+```
+    rsync -avz -e "ssh -p <ip> -i ~/.ssh/id_ed25519" \
+                                 --exclude='__pycache__' \
+                                 --exclude='*.pyc' \
+                                 --exclude='checkpoints' \
+                                 --exclude='.git' \
+                                 --exclude='.venv' \
+                                 ./ root@<ip>,.:/root/BasicGPT/
+
+```

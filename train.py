@@ -10,13 +10,12 @@ This script ties everything together:
 
 import torch
 import torch.nn.functional as F
-import argparse
 from pathlib import Path
 from datetime import datetime
 
 from tokenizer import Tokenizer
 from gpt import GPT, train_epoch, evaluate
-from prepare_data import load_synth_dataset, create_data_loaders
+from prepare_data import load_training_data, load_validation_data, create_data_loaders
 from device import get_best_device, get_device_info
 from config import GPTConfig, TrainingConfig, DataConfig
 from learning_rate import get_lr
@@ -79,47 +78,6 @@ def main():
     gpt_config = GPTConfig()
     data_config = DataConfig()
     
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Train GPT on SYNTH dataset")
-    
-    # Model architecture arguments
-    # parser.add_argument("--d_model", type=int, default=gpt_config.d_model,
-    #                    help=f"Model dimension (default: {gpt_config.d_model})")
-    # parser.add_argument("--n_heads", type=int, default=gpt_config.n_heads,
-    #                    help=f"Number of attention heads (default: {gpt_config.n_heads})")
-    # parser.add_argument("--n_layers", type=int, default=gpt_config.n_layers,
-    #                    help=f"Number of transformer layers (default: {gpt_config.n_layers})")
-    # parser.add_argument("--max_length", type=int, default=gpt_config.max_length,
-    #                    help=f"Maximum sequence length (default: {gpt_config.max_length})")
-    
-    # # Training arguments
-    # parser.add_argument("--batch_size", type=int, default=training_config.batch_size,
-    #                    help=f"Batch size for training (default: {training_config.batch_size})")
-    # parser.add_argument("--epochs", type=int, default=training_config.epochs,
-    #                    help=f"Number of training epochs (default: {training_config.epochs})")
-    # parser.add_argument("--learning_rate", type=float, default=training_config.lr_config.max_lr,
-    #                    help=f"Learning rate (default: {training_config.lr_config.max_lr})")
-    # parser.add_argument("--save_dir", type=str, default=training_config.save_dir,
-    #                    help=f"Directory to save model checkpoints (default: {training_config.save_dir})")
-    # parser.add_argument("--gradient_accumulation_steps", type=int, default=training_config.gradient_accumulation_steps,
-    #                    help=f"Number of steps to accumulate gradients (default: {training_config.gradient_accumulation_steps}, effective_batch_size = batch_size * gradient_accumulation_steps)")
-    
-    # # Data arguments
-    # parser.add_argument("--max_samples", type=int, default=data_config.max_samples,
-    #                    help=f"Maximum number of samples to use (default: {data_config.max_samples}, None = all)")
-    # parser.add_argument("--streaming", dest="streaming", action="store_const", const=True, default=data_config.streaming,
-    #                    help=f"Use streaming mode for large datasets (default: {data_config.streaming})")
-    # parser.add_argument("--no-streaming", dest="streaming", action="store_const", const=False,
-    #                    help="Disable streaming mode (downloads entire dataset)")
-    # parser.add_argument("--timeout", type=int, default=data_config.timeout,
-    #                    help=f"Timeout in seconds for dataset download (default: {data_config.timeout})")
-    # parser.add_argument("--num-retries", type=int, default=data_config.num_retries,
-    #                    help=f"Number of retry attempts on connection failure (default: {data_config.num_retries})")
-    # parser.add_argument("--text_field", type=str, default=data_config.text_field,
-    #                    help=f"Which field to use from dataset (default: {data_config.text_field})")
-    
-    # args = parser.parse_args()
-    
     # Set device (use GPU if available)
     device = get_best_device()
     print(f"Using device: {device} - {get_device_info(device)}")
@@ -133,15 +91,14 @@ def main():
     
     # Load training dataset
     print("Loading SYNTH training dataset...")
-    train_dataset = load_synth_dataset(
+    train_dataset = load_training_data(
         tokenizer=tokenizer,
-        max_length=args.max_length,
-        split="train",
-        streaming=args.streaming,
-        max_samples=args.max_samples,
-        text_field=args.text_field,
-        num_retries=args.num_retries,
-        timeout=args.timeout
+        max_length=data_config.max_length,
+        streaming=data_config.streaming,
+        max_samples=data_config.max_samples,
+        text_field=data_config.text_field,
+        num_retries=data_config.num_retries,
+        timeout=data_config.timeout
     )
     # Note: IterableDataset doesn't support len(), so we skip this for streaming mode
     try:
@@ -152,12 +109,11 @@ def main():
     
     # Load validation dataset
     print("Loading SYNTH validation dataset...")
-    val_dataset = load_synth_dataset(
+    val_dataset = load_validation_data(
         tokenizer=tokenizer,
         max_length=data_config.max_length,
-        split="validation",
         streaming=data_config.streaming,
-        max_samples=data_config.max_samples // 10 if data_config.max_samples else None,  # Use 10% of training samples for validation
+        max_samples=data_config.max_samples,
         text_field=data_config.text_field,
         num_retries=data_config.num_retries,
         timeout=data_config.timeout
@@ -177,10 +133,9 @@ def main():
         train_dataset=train_dataset,
         val_dataset=val_dataset,
         batch_size=training_config.batch_size,
-        num_workers=num_workers,
-        # prefetch_factor=2,
-        # persistent_workers=True,
+        num_workers=num_workers
     )
+
     # Note: DataLoaders with IterableDataset don't support len()
     try:
         print(f"✓ Created train loader with {len(train_loader)} batches")
@@ -192,24 +147,14 @@ def main():
         print(f"✓ Created val loader (streaming mode - batch count unknown)")
     print()
     
-    # Create model configuration (architecture only)
+    # Create model configuration with tokenizer's vocab_size
     gpt_config = GPTConfig(
-        vocab_size=tokenizer.vocab_size,
-        d_model=args.d_model,
-        n_heads=args.n_heads,
-        n_layers=args.n_layers,
-        max_length=args.max_length
+        vocab_size=tokenizer.vocab_size
     )
-    
-    # Update training configuration with command line arguments
-    training_config.batch_size = args.batch_size
-    training_config.epochs = args.epochs
-    training_config.lr_config.max_lr = args.learning_rate
-    training_config.save_dir = args.save_dir
-    training_config.gradient_accumulation_steps = args.gradient_accumulation_steps
     
     # Calculate effective batch size
     effective_batch_size = training_config.batch_size * training_config.gradient_accumulation_steps
+
     
     # Create model
     print("Creating GPT model...")
@@ -292,7 +237,10 @@ def main():
             scaler=scaler,
             save_dir=save_dir,
             total_batches=total_batches,
-            gradient_accumulation_steps=training_config.gradient_accumulation_steps
+            gradient_accumulation_steps=training_config.gradient_accumulation_steps,
+            val_loader=val_loader,
+            eval_fn=evaluate_validation,
+            training_config=training_config
         )
         
         total_batches += batches_processed

@@ -310,6 +310,9 @@ def train_epoch(
     save_dir=None,
     total_batches=0,
     gradient_accumulation_steps: int = 1,
+    val_loader=None,
+    eval_fn=None,
+    training_config: TrainingConfig = None,
 ) -> tuple[float, int]:
     """
     Train the model for one epoch with gradient accumulation support.
@@ -335,6 +338,11 @@ def train_epoch(
     model.train()  # Set model to training mode
     total_loss = 0.0
     num_batches = 0
+    optimizer_steps = 0
+    
+    # Get logging intervals from config or use defaults
+    log_every_n_steps = training_config.log_every_n_steps if training_config else 100
+    val_check_interval = training_config.val_check_interval if training_config else 1000
     
     for batch_idx, (input_ids, target_ids) in enumerate(train_loader):
         # Move data to device (GPU if available)
@@ -395,6 +403,35 @@ def train_epoch(
             
             # Clear gradients after optimizer step
             optimizer.zero_grad(set_to_none=True)
+            
+            optimizer_steps += 1
+            
+            # Log training loss
+            if optimizer_steps % log_every_n_steps == 0:
+                # Get memory stats if on CUDA
+                if device.type == "cuda":
+                    memory_allocated = torch.cuda.memory_allocated(device) / (1024**3)  # GB
+                    memory_reserved = torch.cuda.memory_reserved(device) / (1024**3)  # GB
+                    try:
+                        loader_length = len(train_loader)
+                        print(f"  Step {optimizer_steps} (Batch {batch_idx + 1}/{loader_length}), Loss: {loss.item() * gradient_accumulation_steps:.4f}, "
+                              f"GPU Memory: {memory_allocated:.2f}GB / {memory_reserved:.2f}GB")
+                    except TypeError:
+                        print(f"  Step {optimizer_steps} (Batch {batch_idx + 1}), Loss: {loss.item() * gradient_accumulation_steps:.4f}, "
+                              f"GPU Memory: {memory_allocated:.2f}GB / {memory_reserved:.2f}GB")
+                else:
+                    try:
+                        loader_length = len(train_loader)
+                        print(f"  Step {optimizer_steps} (Batch {batch_idx + 1}/{loader_length}), Loss: {loss.item() * gradient_accumulation_steps:.4f}")
+                    except TypeError:
+                        print(f"  Step {optimizer_steps} (Batch {batch_idx + 1}), Loss: {loss.item() * gradient_accumulation_steps:.4f}")
+
+            # Run validation
+            if val_loader is not None and eval_fn is not None and optimizer_steps % val_check_interval == 0:
+                print(f"\n  Running validation at step {optimizer_steps}...")
+                val_loss = eval_fn(model, val_loader, device)
+                print(f"  Validation Loss: {val_loss:.4f}")
+                model.train()  # Ensure model is back in training mode
         
         # Track loss (unscaled for reporting)
         total_loss += loss.item() * gradient_accumulation_steps
@@ -404,7 +441,7 @@ def train_epoch(
         current_total_batches = total_batches + num_batches
           
         # Save checkpoint every checkpoint_interval batches
-        if save_dir is not None and current_total_batches % training_config.checkpoint_interval == 0:
+        if save_dir is not None and training_config and current_total_batches % training_config.checkpoint_interval == 0:
             timestamp = datetime.now().strftime("%m-%d-%Y-%H-%M")
             # Create folder for this checkpoint
             checkpoint_folder_name = f"data-{data_config.max_samples}-batch-{current_total_batches}-{timestamp}"
@@ -430,28 +467,6 @@ def train_epoch(
         # Clear CUDA cache periodically to prevent fragmentation
         if device.type == "cuda" and (batch_idx + 1) % 100 == 0:
             torch.cuda.empty_cache()
-        
-        # Print progress (less frequent for large batches)
-        if (batch_idx + 1) % 50 == 0:
-            # Get memory stats if on CUDA
-            if device.type == "cuda":
-                memory_allocated = torch.cuda.memory_allocated(device) / (1024**3)  # GB
-                memory_reserved = torch.cuda.memory_reserved(device) / (1024**3)  # GB
-                try:
-                    loader_length = len(train_loader)
-                    print(f"  Batch {batch_idx + 1}/{loader_length}, Loss: {loss.item():.4f}, "
-                          f"GPU Memory: {memory_allocated:.2f}GB / {memory_reserved:.2f}GB")
-                except TypeError:
-                    # IterableDataset doesn't support len()
-                    print(f"  Batch {batch_idx + 1}, Loss: {loss.item():.4f}, "
-                          f"GPU Memory: {memory_allocated:.2f}GB / {memory_reserved:.2f}GB")
-            else:
-                try:
-                    loader_length = len(train_loader)
-                    print(f"  Batch {batch_idx + 1}/{loader_length}, Loss: {loss.item():.4f}")
-                except TypeError:
-                    # IterableDataset doesn't support len()
-                    print(f"  Batch {batch_idx + 1}, Loss: {loss.item():.4f}")
     
     # Calculate average loss
     avg_loss = total_loss / num_batches if num_batches > 0 else 0.0

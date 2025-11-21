@@ -35,6 +35,7 @@ class DataConfig:
     max_samples: Optional[int] = 5000000  # Maximum number of samples to use (None = all)
     max_length: int = 1024  # Maximum sequence length for tokenization
     text_field: str = "synthetic_answer"  # Which field to use from dataset
+    batch_size: int = 32  # Same as training config
     include_reasoning: bool = False  # Whether to include reasoning steps in training data
     filter_english_only: bool = True  # Filter to only English samples (uses dataset's 'language' field)
     streaming: bool = True  # Use streaming mode for large datasets
@@ -57,7 +58,7 @@ class TrainingConfig:
     # Training hyperparameters
     batch_size: int = 32  # Batch size for training (optimized for 92GB VRAM with max_length=1024)
     lr_config: LearningRateConfig = field(default_factory=LearningRateConfig)
-    epochs: int = 1  # Number of training epochs
+    epochs: int = 3  # Number of training epochs
     weight_decay: float = 0.01  # L2 regularization (for AdamW)
     beta1: float = 0.9  # Adam beta1 parameter
     beta2: float = 0.999  # Adam beta2 parameter
@@ -71,7 +72,9 @@ class TrainingConfig:
     # Training settings
     save_dir: str = "./checkpoints"  # Directory to save model checkpoints
     save_every_n_batches: Optional[int] = None  # Save checkpoint every N batches (None = only at end of epoch)
-    print_every_n_batches: int = 50  # Print progress every N batches
+    print_every_n_batches: int = 50  # Print progress every N batches (DEPRECATED in favor of log_every_n_steps)
+    log_every_n_steps: int = 100  # Log training loss every N optimizer steps
+    val_check_interval: int = 1000  # Run validation every N optimizer steps
     use_mixed_precision: bool = True  # Use FP16/BF16 mixed precision training
     use_gradient_checkpointing: bool = False  # Use gradient checkpointing to save memory
     checkpoint_interval: int = 10000  # Save checkpoint every N batches

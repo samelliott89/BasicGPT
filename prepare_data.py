@@ -13,10 +13,11 @@ from tokenizer import Tokenizer
 from typing import Optional
 import time
 import os
-from config import GPTConfig, DataConfig
+from config import GPTConfig, DataConfig, TrainingConfig
 
 gpt_config = GPTConfig()
 data_config = DataConfig()
+training_config = TrainingConfig()
 
 class SYNTHDataset(Dataset):
 #     """
@@ -257,17 +258,22 @@ def load_synth_dataset(
     filter_english_only: bool = data_config.filter_english_only,
     num_retries: int = data_config.num_retries,
     timeout: int = data_config.timeout,
-    max_samples: int = data_config.max_samples
+    max_samples: int = data_config.max_samples,
+    val_split_percentage: float = 0.1,  # Use 10% for validation
+    use_val_split: bool = False  # If True, skip first (1-val_split_percentage) of data
 ) -> SYNTHDataset:
     """
     Load the SYNTH dataset from Hugging Face and prepare it for training.
     
     This function includes retry logic to handle network timeouts and connection issues.
+    Since the PleIAs/SYNTH dataset doesn't have a validation split, this function can
+    split the train data into train/val portions.
     
     Args:
         tokenizer: The Tokenizer instance to use
         max_length: Maximum sequence length
         split: Dataset split to load ("train", "validation", etc.)
+               Note: PleIAs/SYNTH only has "train", so always use "train"
         streaming: If True, stream the dataset (recommended for large datasets)
                   Streaming doesn't download the entire dataset upfront, which
                   helps avoid timeout issues.
@@ -276,6 +282,9 @@ def load_synth_dataset(
         include_reasoning: If True, include reasoning steps in training data
         num_retries: Number of times to retry on failure
         timeout: Timeout in seconds for download operations
+        val_split_percentage: Percentage of data to use for validation (0.0 to 1.0)
+        use_val_split: If True, return the validation portion (last val_split_percentage)
+                      If False, return the train portion (first 1-val_split_percentage)
         
     Returns:
         A SYNTHDataset instance ready for training
@@ -284,7 +293,11 @@ def load_synth_dataset(
         FileNotFoundError: If dataset cannot be loaded after retries
     """
     print(f"Loading SYNTH dataset from Hugging Face...")
-    print(f"  Split: {split}")
+    print(f"  Split: {split} (loading from 'train' split)")
+    if use_val_split:
+        print(f"  Using VALIDATION portion (last {val_split_percentage*100:.0f}% of data)")
+    else:
+        print(f"  Using TRAINING portion (first {(1-val_split_percentage)*100:.0f}% of data)")
     print(f"  Streaming: {streaming} (recommended for large datasets)")
     print(f"  Max samples: {max_samples if max_samples else 'all'}")
     print(f"  Include reasoning: {include_reasoning}")
@@ -307,10 +320,11 @@ def load_synth_dataset(
             # Load the dataset from Hugging Face
             # The SYNTH dataset is quite large (~68M samples), so streaming=True
             # is recommended as it doesn't require downloading everything upfront
+            # NOTE: PleIAs/SYNTH only has "train" split, no validation split
             print("Connecting to Hugging Face Hub...")
             dataset = load_dataset(
                 "PleIAs/SYNTH",
-                split=split,
+                split="train",  # Always use "train" - we'll split it ourselves
                 streaming=streaming,
                 download_config={
                     "timeout": timeout,
@@ -362,12 +376,51 @@ def load_synth_dataset(
                     f"Last error: {error_msg}"
                 ) from last_error
     
-    # If max_samples is specified and not streaming, take a subset
-    if max_samples and not streaming:
-        dataset = dataset.select(range(min(max_samples, len(dataset))))
-    elif max_samples and streaming:
-        # For streaming, we'll take first max_samples
-        dataset = dataset.take(max_samples)
+    # Split the dataset into train/validation portions
+    # For streaming datasets, we need to use skip() and take()
+    if max_samples:
+        if use_val_split:
+            # For validation: skip training portion, take validation portion
+            train_samples = int(max_samples * (1 - val_split_percentage))
+            val_samples = max_samples - train_samples
+            dataset = dataset.skip(train_samples).take(val_samples)
+        else:
+            # For training: take training portion only
+            train_samples = int(max_samples * (1 - val_split_percentage))
+            dataset = dataset.take(train_samples)
+    else:
+        # No max_samples specified - need to handle differently for streaming
+        if streaming:
+            # For streaming without max_samples, we can't easily split
+            # We'll need to rely on the caller to specify max_samples
+            # For now, print a warning
+            if use_val_split:
+                print("⚠️  WARNING: Cannot create validation split from streaming dataset without max_samples")
+                print("   Please specify max_samples to enable train/val splitting")
+        else:
+            # For non-streaming, we can use the full dataset and split it
+            total_samples = len(dataset)
+            if use_val_split:
+                # Validation: take last val_split_percentage
+                train_samples = int(total_samples * (1 - val_split_percentage))
+                dataset = dataset.select(range(train_samples, total_samples))
+            else:
+                # Training: take first (1 - val_split_percentage)
+                train_samples = int(total_samples * (1 - val_split_percentage))
+                dataset = dataset.select(range(train_samples))
+
+
+    # Shuffle the dataset if it's for training (only if streaming/iterable)
+    # For streaming datasets, we can use buffer-based shuffling
+    # This shuffles within a buffer window, providing good randomization
+    if isinstance(dataset, HfIterableDataset) or streaming:
+        # Only shuffle training data, not validation
+        if not use_val_split or (use_val_split and streaming):
+            # For iterable datasets, use buffer-based shuffle
+            # buffer_size determines how many samples to load before shuffling
+            # Larger buffer = better shuffle quality but more memory usage
+            dataset = dataset.shuffle(buffer_size=10000, seed=42)
+            print("  Applied buffer-based shuffling (buffer_size=10000)")
     
     # Create our custom dataset
     # Check if it's a streaming dataset (IterableDataset)
@@ -391,12 +444,111 @@ def load_synth_dataset(
         )
     
     return synth_dataset
+
+
+
+def load_training_data(
+    tokenizer: Tokenizer,
+    max_length: int = data_config.max_length,
+    streaming: bool = data_config.streaming,
+    text_field: str = data_config.text_field,
+    include_reasoning: bool = data_config.include_reasoning,
+    filter_english_only: bool = data_config.filter_english_only,
+    num_retries: int = data_config.num_retries,
+    timeout: int = data_config.timeout,
+    max_samples: int = data_config.max_samples,
+    val_split_percentage: float = 0.1
+):
+    """
+    Load training data (first 90% of the train split by default).
+    
+    This is a convenience wrapper around load_synth_dataset that automatically
+    sets use_val_split=False to get the training portion of the data.
+    
+    Args:
+        tokenizer: The Tokenizer instance to use
+        max_length: Maximum sequence length
+        streaming: If True, stream the dataset (recommended for large datasets)
+        text_field: Which field to use as text source
+        include_reasoning: If True, include reasoning steps in training data
+        filter_english_only: If True, only use English samples
+        num_retries: Number of times to retry on failure
+        timeout: Timeout in seconds for download operations
+        max_samples: Maximum number of samples to load (None = all)
+        val_split_percentage: Percentage of data reserved for validation (default 10%)
+        
+    Returns:
+        Training dataset
+    """
+    return load_synth_dataset(
+        tokenizer=tokenizer,
+        max_length=max_length,
+        split="train",
+        streaming=streaming,
+        text_field=text_field,
+        include_reasoning=include_reasoning,
+        filter_english_only=filter_english_only,
+        num_retries=num_retries,
+        timeout=timeout,
+        max_samples=max_samples,
+        val_split_percentage=val_split_percentage,
+        use_val_split=False  # Get training portion
+    )
+
+
+def load_validation_data(
+    tokenizer: Tokenizer,
+    max_length: int = data_config.max_length,
+    streaming: bool = data_config.streaming,
+    text_field: str = data_config.text_field,
+    include_reasoning: bool = data_config.include_reasoning,
+    filter_english_only: bool = data_config.filter_english_only,
+    num_retries: int = data_config.num_retries,
+    timeout: int = data_config.timeout,
+    max_samples: int = data_config.max_samples,
+    val_split_percentage: float = 0.1
+):
+    """
+    Load validation data (last 10% of the train split by default).
+    
+    This is a convenience wrapper around load_synth_dataset that automatically
+    sets use_val_split=True to get the validation portion of the data.
+    
+    Args:
+        tokenizer: The Tokenizer instance to use
+        max_length: Maximum sequence length
+        streaming: If True, stream the dataset (recommended for large datasets)
+        text_field: Which field to use as text source
+        include_reasoning: If True, include reasoning steps in training data
+        filter_english_only: If True, only use English samples
+        num_retries: Number of times to retry on failure
+        timeout: Timeout in seconds for download operations
+        max_samples: Maximum number of samples to load (None = all)
+        val_split_percentage: Percentage of data reserved for validation (default 10%)
+        
+    Returns:
+        Validation dataset
+    """
+    return load_synth_dataset(
+        tokenizer=tokenizer,
+        max_length=max_length,
+        split="train",
+        streaming=streaming,
+        text_field=text_field,
+        include_reasoning=include_reasoning,
+        filter_english_only=filter_english_only,
+        num_retries=num_retries,
+        timeout=timeout,
+        max_samples=max_samples,
+        val_split_percentage=val_split_percentage,
+        use_val_split=True  # Get validation portion
+    )
     
 
 def create_data_loaders(
     train_dataset,
     val_dataset = None,
-    batch_size: int = 16,  # Default batch size (should match TrainingConfig default)
+    batch_size: int = data_config.batch_size,  # Default batch size (should match TrainingConfig default)
     num_workers: int = data_config.num_dataset_workers,
 
 ) -> tuple[DataLoader, Optional[DataLoader]]:
@@ -419,42 +571,44 @@ def create_data_loaders(
     """
     # Check if dataset is an IterableDataset (streaming mode)
     is_iterable = isinstance(train_dataset, IterableDataset)
-
-    # Shuffle training dataset
-    train_dataset = train_dataset.shuffle(buffer_size=10000, seed=42)
+    
+    # Note: Shuffling is already handled in load_synth_dataset for streaming datasets
+    # For non-streaming datasets, we use DataLoader's shuffle parameter below
     
     # Create training data loader
     # Note: IterableDataset doesn't support shuffle, so we skip it for streaming mode
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=not is_iterable,
-        num_workers=num_workers ## if not is_iterable else 0,  # IterableDataset needs num_workers=0
-        pin_memory=True,    
-        prefetch_factor=2,
-        persistent_workers=True, 
-    )
+    # Also, prefetch_factor and persistent_workers only work with num_workers > 0
+    train_loader_kwargs = {
+        "batch_size": batch_size,
+        "shuffle": not is_iterable,
+        "num_workers": num_workers if not is_iterable else 0,
+        "pin_memory": True,
+    }
+    
+    # Only add these options if using multiple workers
+    if train_loader_kwargs["num_workers"] > 0:
+        train_loader_kwargs["prefetch_factor"] = 2
+        train_loader_kwargs["persistent_workers"] = True
+    
+    train_loader = DataLoader(train_dataset, **train_loader_kwargs)
     
     # Create validation data loader (if provided)
     val_loader = None
     if val_dataset is not None:
         is_val_iterable = isinstance(val_dataset, IterableDataset)
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=64,          # ← Can be larger (no gradients stored)
-            shuffle=False,          # ← No shuffling needed
-            num_workers=4,          # ← Same
-            pin_memory=True,        # ← Same
-            prefetch_factor=2,      # ← Same
-            persistent_workers=True # ← Same
-        )
-        # val_loader = DataLoader(
-        #     val_dataset,
-        #     batch_size=batch_size,
-        #     shuffle=False,  # Don't shuffle validation data
-        #     num_workers=num_workers if not is_val_iterable else 0,
-        #     pin_memory=True
-        # )
+        val_loader_kwargs = {
+            "batch_size": batch_size * 2,  # Can be larger (no gradients stored)
+            "shuffle": False,  # No shuffling needed for validation
+            "num_workers": num_workers if not is_val_iterable else 0,
+            "pin_memory": True,
+        }
+        
+        # Only add these options if using multiple workers
+        if val_loader_kwargs["num_workers"] > 0:
+            val_loader_kwargs["prefetch_factor"] = 2
+            val_loader_kwargs["persistent_workers"] = True
+        
+        val_loader = DataLoader(val_dataset, **val_loader_kwargs)
     
     return train_loader, val_loader
 

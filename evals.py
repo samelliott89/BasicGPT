@@ -18,7 +18,7 @@ import math
 from tokenizer import Tokenizer
 from gpt import GPT
 from config import GPTConfig, EvaluationConfig, GenerationConfig
-from prepare_data import load_synth_dataset, create_data_loaders
+from prepare_data import load_validation_data, create_data_loaders
 
 
 
@@ -331,10 +331,9 @@ def evaluate_model(
     
     # Load evaluation dataset
     print(f"Loading evaluation dataset ({eval_config.eval_samples} samples)...")
-    eval_dataset = load_synth_dataset(
+    eval_dataset = load_validation_data(
         tokenizer=tokenizer,
         max_length=eval_config.max_length,
-        split="validation",
         streaming=True,
         max_samples=eval_config.eval_samples,
         text_field="synthetic_answer"
@@ -360,10 +359,9 @@ def evaluate_model(
     print("2. ACCURACY EVALUATION")
     print("-" * 60)
     # Need to recreate loader since we exhausted it
-    eval_dataset = load_synth_dataset(
+    eval_dataset = load_validation_data(
         tokenizer=tokenizer,
         max_length=eval_config.max_length,
-        split="validation",
         streaming=True,
         max_samples=eval_config.eval_samples,
         text_field="synthetic_answer"
