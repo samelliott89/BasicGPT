@@ -1,3 +1,4 @@
+#!/bin/bash
 #Connect to vast.ai machine
 ssh -p port -i ~/.ssh/id_ed25519 root@your-ip
 

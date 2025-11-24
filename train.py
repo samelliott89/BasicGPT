@@ -48,15 +48,33 @@ def evaluate_validation(model, val_loader, device):
         for batch_idx, (input_ids, target_ids) in enumerate(val_loader):
             input_ids = input_ids.to(device)
             target_ids = target_ids.to(device)
-            
-            # Forward pass
-            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+
+            # Use same precision as training
+            if use_amp:
+                with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                    logits = model(input_ids)
+                    loss = F.cross_entropy(
+                        logits.reshape(-1, logits.size(-1)),
+                        target_ids.reshape(-1),
+                        reduction='sum'
+                    )
+            else:
+                # No mixed precision
                 logits = model(input_ids)
                 loss = F.cross_entropy(
                     logits.reshape(-1, logits.size(-1)),
                     target_ids.reshape(-1),
                     reduction='sum'
                 )
+            
+            # # Forward pass
+            # with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            #     logits = model(input_ids)
+            #     loss = F.cross_entropy(
+            #         logits.reshape(-1, logits.size(-1)),
+            #         target_ids.reshape(-1),
+            #         reduction='sum'
+            #     )
             
             # Count non-padding tokens
             num_tokens = (target_ids != 0).sum().item()
@@ -249,7 +267,7 @@ def main():
         val_loss = None
         if val_loader is not None:
             print("\nEvaluating on validation set...")
-            val_loss = evaluate_validation(model, val_loader, device)
+            val_loss = evaluate_validation(model, val_loader, device, use_amp=use_amp)
         
         print(f"\nEpoch {epoch + 1} completed!")
         print(f"  Average training loss: {train_loss:.4f}")
