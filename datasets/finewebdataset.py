@@ -1,6 +1,13 @@
 import torch
 from typing import Optional
 from datasets.datasetprep import DatasetPrep, DatasetLang
+from config import DataConfig
+
+# Custom config overrides (optional)
+# Uncomment and modify these to override defaults from config.py
+# CUSTOM_MAX_LENGTH = 512
+# CUSTOM_TEXT_FIELD = "text"
+# CUSTOM_LANGUAGE = DatasetLang.FRENCH
 
 class FineWebDataset(DatasetPrep):
     """
@@ -71,13 +78,13 @@ class FineWebDataset(DatasetPrep):
         cls,
         dataset_name: str,
         tokenizer,
-        max_length: int = 1024,
+        max_length: int = None,
         text_field: str = "text",
         language: DatasetLang = DatasetLang.ENGLISH,
         split: str = "train",
-        streaming: bool = True,
-        num_retries: int = 3,
-        timeout: int = 300,
+        streaming: bool = None,
+        num_retries: int = None,
+        timeout: int = None,
         max_samples: Optional[int] = None,
         use_val_split: bool = False,
         val_split_percentage: float = 0.1,
@@ -85,26 +92,34 @@ class FineWebDataset(DatasetPrep):
         """
         Load FineWeb dataset from HuggingFace and create a FineWebDataset instance.
         
+        Uses defaults from DataConfig unless explicitly overridden.
+        
         This is a convenience class method that combines dataset loading and
         instantiation in one step.
         
         Args:
             dataset_name: HuggingFace dataset name (e.g., "HuggingFaceFW/fineweb")
             tokenizer: Tokenizer instance for encoding text
-            max_length: Maximum sequence length
+            max_length: Maximum sequence length (default from DataConfig)
             text_field: Which field contains the text
             language: Language filter
             split: Dataset split to load
-            streaming: Whether to stream the dataset
-            num_retries: Number of retry attempts
-            timeout: Timeout for downloads
-            max_samples: Maximum number of samples
+            streaming: Whether to stream the dataset (default from DataConfig)
+            num_retries: Number of retry attempts (default from DataConfig)
+            timeout: Timeout for downloads (default from DataConfig)
+            max_samples: Maximum number of samples (default from DataConfig)
             use_val_split: Whether to use validation split
             val_split_percentage: Percentage for validation split
             
         Returns:
             FineWebDataset instance ready for training
         """
+        # Get defaults from DataConfig
+        data_config = DataConfig()
+        
+        # Use config defaults if not specified
+        if max_length is None:
+            max_length = data_config.max_length
         # Load the raw dataset using the parent class method
         dataset = DatasetPrep.load_dataset(
             dataset_name=dataset_name,
