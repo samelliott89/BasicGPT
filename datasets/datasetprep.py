@@ -154,6 +154,7 @@ class DatasetPrep(IterableDataset, ABC):
     @staticmethod
     def load_dataset(
         dataset_name: str,
+        name: str = None,
         split: str = "train",
         streaming: bool = None,
         num_retries: int = None,
@@ -171,6 +172,7 @@ class DatasetPrep(IterableDataset, ABC):
         
         Args:
             dataset_name: Name/path of the HuggingFace dataset (e.g., "PleIAs/SYNTH")
+            name: Optional dataset configuration name (e.g., "sample-10BT", "en", "default")
             split: Dataset split to load ("train", "validation", etc.)
             streaming: If True, stream the dataset (default from DataConfig)
             num_retries: Number of times to retry on failure (default from DataConfig)
@@ -200,6 +202,8 @@ class DatasetPrep(IterableDataset, ABC):
             max_samples = data_config.max_samples
         
         print(f"Loading {dataset_name} dataset from Hugging Face...")
+        if name:
+            print(f"  Configuration: {name}")
         print(f"  Split: {split}")
         if use_val_split:
             print(f"  Using VALIDATION portion (last {val_split_percentage*100:.0f}% of data)")
@@ -225,15 +229,26 @@ class DatasetPrep(IterableDataset, ABC):
                 # Load the dataset from Hugging Face
                 # Default to streaming=True as it doesn't require downloading everything upfront
                 print("Connecting to Hugging Face Hub...")
-                dataset = load_dataset(
-                    dataset_name,
-                    split=split,
-                    streaming=streaming,
-                    download_config={
+                
+                # Build load_dataset arguments
+                load_args = {
+                    "path": dataset_name,
+                    "split": split,
+                    "streaming": streaming,
+                }
+                
+                # Add name parameter if specified
+                if name is not None:
+                    load_args["name"] = name
+                
+                # Add download_config for non-streaming datasets
+                if not streaming:
+                    load_args["download_config"] = {
                         "timeout": timeout,
                         "num_proc": 1,  # Reduce parallel downloads to avoid timeouts
-                    } if not streaming else None
-                )
+                    }
+                
+                dataset = load_dataset(**load_args)
                 
                 print("✓ Successfully connected to dataset")
                 break
@@ -324,29 +339,5 @@ class DatasetPrep(IterableDataset, ABC):
                 # Larger buffer = better shuffle quality but more memory usage
                 dataset = dataset.shuffle(buffer_size=10000, seed=42)
                 print("  Applied buffer-based shuffling (buffer_size=10000)")
-        
-        # Create our custom dataset
-        # Check if it's a streaming dataset (IterableDataset)
-
-        ## This would be custom code to setup each dataset
-        ## For now, we'll just use the Hugging Face datasets
-
-        # if isinstance(dataset, HfIterableDataset) or streaming:
-        #     print("Using IterableDataset for streaming mode...")
-        #     dataset = SYNTHIterableDataset(
-        #         dataset=dataset,
-        #         tokenizer=tokenizer,
-        #         max_length=max_length,
-        #         text_field=text_field,
-        #         include_reasoning=include_reasoning,
-        #     )
-        # else:
-        #     print("Using regular Dataset (pre-tokenizing all samples)...")
-        #     synth_dataset = SYNTHDataset(
-        #         dataset=dataset,
-        #         tokenizer=tokenizer,
-        #         max_length=max_length,
-        #         text_field=text_field
-        #     )
         
         return dataset  

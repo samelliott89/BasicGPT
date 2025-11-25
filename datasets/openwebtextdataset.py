@@ -7,14 +7,15 @@ from config import DataConfig
 # Uncomment and modify these to override defaults from config.py
 # CUSTOM_MAX_LENGTH = 512
 # CUSTOM_TEXT_FIELD = "text"
-# CUSTOM_LANGUAGE = DatasetLang.FRENCH
 
-class FineWebDataset(DatasetPrep):
+class OpenWebTextDataset(DatasetPrep):
     """
-    A PyTorch IterableDataset class for the FineWeb dataset.
+    A PyTorch IterableDataset class for the OpenWebText dataset.
     
     Inherits common tokenization and iteration logic from DatasetPrep.
-    Implements FineWeb-specific text preprocessing.
+    Implements OpenWebText-specific text preprocessing.
+    
+    OpenWebText is an open-source recreation of the WebText dataset used to train GPT-2.
     """
     
     def __init__(
@@ -26,7 +27,7 @@ class FineWebDataset(DatasetPrep):
         language: DatasetLang = DatasetLang.ENGLISH
     ):
         """
-        Initialize the FineWeb dataset.
+        Initialize the OpenWebText dataset.
         
         Args:
             dataset: The HuggingFace dataset (streaming or regular)
@@ -46,14 +47,14 @@ class FineWebDataset(DatasetPrep):
     
     def _pre_process_sample(self, sample: dict) -> Optional[str]:
         """
-        Extract and preprocess text from a FineWeb sample.
+        Extract and preprocess text from an OpenWebText sample.
         
-        FineWeb samples typically have a simple structure with a text field.
-        This method can be extended to add FineWeb-specific filtering or
+        OpenWebText samples have a simple structure with a text field.
+        This method can be extended to add OpenWebText-specific filtering or
         preprocessing logic.
         
         Args:
-            sample: A dictionary containing the FineWeb sample
+            sample: A dictionary containing the OpenWebText sample
             
         Returns:
             The preprocessed text string, or None if the sample should be skipped
@@ -65,10 +66,5 @@ class FineWebDataset(DatasetPrep):
         if not text or len(text.strip()) == 0:
             return None
         
-        # Optional: Add language filtering if the dataset has a language field
-        if hasattr(self, 'language') and 'language' in sample:
-            sample_language = sample.get('language', '')
-            if sample_language and sample_language != self.language:
-                return None
-        
         return text
+

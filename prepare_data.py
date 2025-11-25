@@ -447,100 +447,203 @@ def load_synth_dataset(
 
 
 def load_training_data(
+    dataset_class,
+    dataset_name: str,
     tokenizer: Tokenizer,
-    max_length: int = data_config.max_length,
-    streaming: bool = data_config.streaming,
-    text_field: str = data_config.text_field,
-    include_reasoning: bool = data_config.include_reasoning,
-    filter_english_only: bool = data_config.filter_english_only,
-    num_retries: int = data_config.num_retries,
-    timeout: int = data_config.timeout,
-    max_samples: int = data_config.max_samples,
-    val_split_percentage: float = 0.1
+    name: str = None,
+    max_length: int = None,
+    text_field: str = "text",
+    split: str = "train",
+    streaming: bool = None,
+    num_retries: int = None,
+    timeout: int = None,
+    max_samples: int = None,
+    val_split_percentage: float = 0.1,
+    has_val_split: bool = False,
+    **dataset_kwargs
 ):
     """
-    Load training data (first 90% of the train split by default).
+    Generic helper to load training data for any dataset.
     
-    This is a convenience wrapper around load_synth_dataset that automatically
-    sets use_val_split=False to get the training portion of the data.
+    This function handles two scenarios:
+    1. Dataset has a native validation split: loads from split="train"
+    2. Dataset needs manual splitting: loads from split="train" with use_val_split=False (first 90%)
     
     Args:
-        tokenizer: The Tokenizer instance to use
-        max_length: Maximum sequence length
-        streaming: If True, stream the dataset (recommended for large datasets)
-        text_field: Which field to use as text source
-        include_reasoning: If True, include reasoning steps in training data
-        filter_english_only: If True, only use English samples
-        num_retries: Number of times to retry on failure
-        timeout: Timeout in seconds for download operations
-        max_samples: Maximum number of samples to load (None = all)
-        val_split_percentage: Percentage of data reserved for validation (default 10%)
+        dataset_class: The dataset class to instantiate (e.g., FineWebDataset, C4Dataset)
+        dataset_name: HuggingFace dataset name (e.g., "HuggingFaceFW/fineweb")
+        tokenizer: Tokenizer instance for encoding text
+        name: Optional dataset configuration name (e.g., "sample-10BT", "en")
+        max_length: Maximum sequence length (default from DataConfig)
+        text_field: Which field contains the text (default: "text")
+        split: Dataset split to load (default: "train")
+        streaming: Whether to stream the dataset (default from DataConfig)
+        num_retries: Number of retry attempts (default from DataConfig)
+        timeout: Timeout for downloads (default from DataConfig)
+        max_samples: Maximum number of samples (default from DataConfig)
+        val_split_percentage: Percentage for validation split (default: 0.1 = 10%)
+        has_val_split: If True, dataset has native validation split
+                       If False, will split train data 90/10 (use_val_split=False for training)
+        **dataset_kwargs: Additional dataset-specific parameters (e.g., include_reasoning, filter_english_only)
         
     Returns:
-        Training dataset
+        Dataset instance ready for training
+        
+    Example:
+        # For FineWeb (no native val split, needs manual splitting)
+        train_ds = load_training_data(
+            dataset_class=FineWebDataset,
+            dataset_name="HuggingFaceFW/fineweb",
+            name="sample-10BT",
+            tokenizer=tokenizer,
+            has_val_split=False  # Will use use_val_split=False to get first 90%
+        )
+        
+        # For a dataset with native validation split
+        train_ds = load_training_data(
+            dataset_class=SomeDataset,
+            dataset_name="some/dataset",
+            tokenizer=tokenizer,
+            has_val_split=True  # Will just load from split="train"
+        )
     """
-    return load_synth_dataset(
-        tokenizer=tokenizer,
-        max_length=max_length,
-        split="train",
+    # Get defaults from DataConfig
+    data_config_instance = DataConfig()
+    if max_length is None:
+        max_length = data_config_instance.max_length
+    
+    # Load the raw dataset
+    from datasets.datasetprep import DatasetPrep
+    
+    # For training data, we always use use_val_split=False
+    # - If has_val_split=True: loads full "train" split (dataset has separate validation)
+    # - If has_val_split=False: loads first 90% of "train" split
+    raw_dataset = DatasetPrep.load_dataset(
+        dataset_name=dataset_name,
+        name=name,
+        split=split,
         streaming=streaming,
-        text_field=text_field,
-        include_reasoning=include_reasoning,
-        filter_english_only=filter_english_only,
         num_retries=num_retries,
         timeout=timeout,
         max_samples=max_samples,
+        use_val_split=False,  # Always False for training
         val_split_percentage=val_split_percentage,
-        use_val_split=False  # Get training portion
+    )
+    
+    # Wrap with the dataset-specific class
+    return dataset_class(
+        dataset=raw_dataset,
+        tokenizer=tokenizer,
+        max_length=max_length,
+        text_field=text_field,
+        **dataset_kwargs
     )
 
 
+
 def load_validation_data(
+    dataset_class,
+    dataset_name: str,
     tokenizer: Tokenizer,
-    max_length: int = data_config.max_length,
-    streaming: bool = data_config.streaming,
-    text_field: str = data_config.text_field,
-    include_reasoning: bool = data_config.include_reasoning,
-    filter_english_only: bool = data_config.filter_english_only,
-    num_retries: int = data_config.num_retries,
-    timeout: int = data_config.timeout,
-    max_samples: int = data_config.max_samples,
-    val_split_percentage: float = 0.1
+    name: str = None,
+    max_length: int = None,
+    text_field: str = "text",
+    split: str = "validation",
+    streaming: bool = None,
+    num_retries: int = None,
+    timeout: int = None,
+    max_samples: int = None,
+    val_split_percentage: float = 0.1,
+    has_val_split: bool = False,
+    **dataset_kwargs
 ):
     """
-    Load validation data (last 10% of the train split by default).
+    Generic helper to load validation data for any dataset.
     
-    This is a convenience wrapper around load_synth_dataset that automatically
-    sets use_val_split=True to get the validation portion of the data.
+    This function handles two scenarios:
+    1. Dataset has a native validation split: loads from split="validation"
+    2. Dataset needs manual splitting: loads from split="train" with use_val_split=True
     
     Args:
-        tokenizer: The Tokenizer instance to use
-        max_length: Maximum sequence length
-        streaming: If True, stream the dataset (recommended for large datasets)
-        text_field: Which field to use as text source
-        include_reasoning: If True, include reasoning steps in training data
-        filter_english_only: If True, only use English samples
-        num_retries: Number of times to retry on failure
-        timeout: Timeout in seconds for download operations
-        max_samples: Maximum number of samples to load (None = all)
-        val_split_percentage: Percentage of data reserved for validation (default 10%)
+        dataset_class: The dataset class to instantiate (e.g., FineWebDataset, C4Dataset)
+        dataset_name: HuggingFace dataset name (e.g., "HuggingFaceFW/fineweb")
+        tokenizer: Tokenizer instance for encoding text
+        name: Optional dataset configuration name (e.g., "sample-10BT", "en")
+        max_length: Maximum sequence length (default from DataConfig)
+        text_field: Which field contains the text (default: "text")
+        split: Dataset split to load (default: "validation", or "train" if no native split)
+        streaming: Whether to stream the dataset (default from DataConfig)
+        num_retries: Number of retry attempts (default from DataConfig)
+        timeout: Timeout for downloads (default from DataConfig)
+        max_samples: Maximum number of samples (default from DataConfig)
+        val_split_percentage: Percentage for validation split (default: 0.1 = 10%)
+        has_val_split: If True, dataset has native validation split, use split="validation"
+                       If False, use use_val_split=True to get last 10% of train data
+        **dataset_kwargs: Additional dataset-specific parameters (e.g., include_reasoning, filter_english_only)
         
     Returns:
-        Validation dataset
+        Dataset instance ready for validation
+        
+    Example:
+        # For FineWeb (no native val split, needs manual splitting)
+        val_ds = load_validation_data(
+            dataset_class=FineWebDataset,
+            dataset_name="HuggingFaceFW/fineweb",
+            name="sample-10BT",
+            tokenizer=tokenizer,
+            has_val_split=False  # Will use use_val_split=True on train split
+        )
+        
+        # For a dataset with native validation split
+        val_ds = load_validation_data(
+            dataset_class=SomeDataset,
+            dataset_name="some/dataset",
+            tokenizer=tokenizer,
+            has_val_split=True  # Will use split="validation"
+        )
     """
-    return load_synth_dataset(
+    # Get defaults from DataConfig
+    data_config_instance = DataConfig()
+    if max_length is None:
+        max_length = data_config_instance.max_length
+    
+    # Load the raw dataset
+    from datasets.datasetprep import DatasetPrep
+    
+    if has_val_split:
+        # Dataset has native validation split, load from "validation" split
+        raw_dataset = DatasetPrep.load_dataset(
+            dataset_name=dataset_name,
+            name=name,
+            split=split,
+            streaming=streaming,
+            num_retries=num_retries,
+            timeout=timeout,
+            max_samples=max_samples,
+            use_val_split=False,  # Not needed, using native split
+            val_split_percentage=val_split_percentage,
+        )
+    else:
+        # Dataset needs manual splitting, get last 10% (validation portion)
+        raw_dataset = DatasetPrep.load_dataset(
+            dataset_name=dataset_name,
+            name=name,
+            split="train",  # Load from train split, then take last 10%
+            streaming=streaming,
+            num_retries=num_retries,
+            timeout=timeout,
+            max_samples=max_samples,
+            use_val_split=True,  # Get validation portion (last 10%)
+            val_split_percentage=val_split_percentage,
+        )
+    
+    # Wrap with the dataset-specific class
+    return dataset_class(
+        dataset=raw_dataset,
         tokenizer=tokenizer,
         max_length=max_length,
-        split="train",
-        streaming=streaming,
         text_field=text_field,
-        include_reasoning=include_reasoning,
-        filter_english_only=filter_english_only,
-        num_retries=num_retries,
-        timeout=timeout,
-        max_samples=max_samples,
-        val_split_percentage=val_split_percentage,
-        use_val_split=True  # Get validation portion
+        **dataset_kwargs
     )
     
 
