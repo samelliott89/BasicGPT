@@ -15,7 +15,7 @@ from datetime import datetime
 
 from tokenizer import Tokenizer
 from gpt import GPT, train_epoch, evaluate
-from prepare_data import load_training_data, load_validation_data, create_data_loaders
+from prepare_data import load_datasets, create_data_loaders
 from device import get_best_device, get_device_info
 from config import GPTConfig, TrainingConfig, DataConfig
 from learning_rate import get_lr
@@ -107,39 +107,38 @@ def main():
     print(f"✓ Tokenizer initialized (vocab_size={tokenizer.vocab_size})")
     print()
     
-    # Load training dataset
-    print("Loading SYNTH training dataset...")
-    train_dataset = load_training_data(
+    # Load training dataset(s)
+    print("=" * 60)
+    print(f"Loading training dataset(s): {[ds.value for ds in data_config.current_datasets]}")
+    print("=" * 60)
+    train_dataset = load_datasets(
+        dataset_names=data_config.current_datasets,
         tokenizer=tokenizer,
+        is_training=True,
+        probabilities=data_config.dataset_probabilities,
         max_length=data_config.max_length,
         streaming=data_config.streaming,
         max_samples=data_config.max_samples,
-        text_field=data_config.text_field,
         num_retries=data_config.num_retries,
         timeout=data_config.timeout
     )
-    # Note: IterableDataset doesn't support len(), so we skip this for streaming mode
-    try:
-        print(f"✓ Loaded {len(train_dataset)} training samples")
-    except TypeError:
-        print(f"✓ Loaded training dataset (streaming mode - length unknown)")
     print()
     
-    # Load validation dataset
-    print("Loading SYNTH validation dataset...")
-    val_dataset = load_validation_data(
+    # Load validation dataset(s)
+    print("=" * 60)
+    print(f"Loading validation dataset(s): {[ds.value for ds in data_config.current_datasets]}")
+    print("=" * 60)
+    val_dataset = load_datasets(
+        dataset_names=data_config.current_datasets,
         tokenizer=tokenizer,
+        is_training=False,
+        probabilities=data_config.dataset_probabilities,
         max_length=data_config.max_length,
         streaming=data_config.streaming,
         max_samples=data_config.max_samples,
-        text_field=data_config.text_field,
         num_retries=data_config.num_retries,
         timeout=data_config.timeout
     )
-    try:
-        print(f"✓ Loaded {len(val_dataset)} validation samples")
-    except TypeError:
-        print(f"✓ Loaded validation dataset (streaming mode - length unknown)")
     print()
     
     # Create data loaders
@@ -173,7 +172,6 @@ def main():
     # Calculate effective batch size
     effective_batch_size = training_config.batch_size * training_config.gradient_accumulation_steps
 
-    
     # Create model
     print("Creating GPT model...")
     model = GPT(gpt_config)

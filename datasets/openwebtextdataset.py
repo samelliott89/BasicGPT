@@ -22,9 +22,10 @@ class OpenWebTextDataset(DatasetPrep):
         self, 
         dataset, 
         tokenizer, 
-        max_length: int = 1024, 
-        text_field: str = "text",
-        language: DatasetLang = DatasetLang.ENGLISH
+        max_length: Optional[int] = None, 
+        text_field: Optional[str] = None,
+        language: Optional[DatasetLang] = None,
+        **kwargs
     ):
         """
         Initialize the OpenWebText dataset.
@@ -32,18 +33,28 @@ class OpenWebTextDataset(DatasetPrep):
         Args:
             dataset: The HuggingFace dataset (streaming or regular)
             tokenizer: Tokenizer instance for encoding text
-            max_length: Maximum sequence length
-            text_field: Which field contains the text (default: "text")
-            language: Language filter for the dataset
+            max_length: Maximum sequence length (defaults to data_config.max_length)
+            text_field: Which field contains the text (defaults to "text")
+            language: Language filter for the dataset (defaults to ENGLISH)
+            **kwargs: Additional config parameters to pass to parent class
         """
+        # Set dataset-specific defaults
+        if text_field is None:
+            text_field = "text"
+        if language is None:
+            language = DatasetLang.ENGLISH
+        
         # Call parent constructor
         super().__init__(
             dataset=dataset,
             tokenizer=tokenizer,
             max_length=max_length,
-            text_field=text_field,
-            language=language
+            **kwargs
         )
+        
+        # Set OpenWebText-specific attributes
+        self.text_field = text_field
+        self.language = language
     
     def _pre_process_sample(self, sample: dict) -> Optional[str]:
         """

@@ -25,10 +25,11 @@ class SYNTHIterableDataset(DatasetPrep):
         self,
         dataset,
         tokenizer,
-        max_length: int = 1024,
-        text_field: str = "synthetic_answer",
+        max_length: Optional[int] = None,
+        text_field: Optional[str] = None,
         include_reasoning: bool = False,
-        filter_english_only: bool = True
+        filter_english_only: bool = True,
+        **kwargs
     ):
         """
         Initialize the SYNTH iterable dataset.
@@ -36,20 +37,28 @@ class SYNTHIterableDataset(DatasetPrep):
         Args:
             dataset: The Hugging Face IterableDataset (streaming mode)
             tokenizer: Tokenizer instance for encoding text
-            max_length: Maximum sequence length (context window size)
-            text_field: Which field from the dataset to use as text
+            max_length: Maximum sequence length (defaults to data_config.max_length)
+            text_field: Which field from the dataset to use as text (defaults to "synthetic_answer")
             include_reasoning: If True, include reasoning steps in training data
             filter_english_only: If True, filter for English-only samples
+            **kwargs: Additional config parameters to pass to parent class
         """
-        # Call parent constructor
+        # Set dataset-specific defaults
+        if text_field is None:
+            text_field = "synthetic_answer"
+        
+        # Call parent constructor with common config parameters
         super().__init__(
             dataset=dataset,
             tokenizer=tokenizer,
             max_length=max_length,
-            text_field=text_field,
-            include_reasoning=include_reasoning,
-            filter_english_only=filter_english_only
+            **kwargs
         )
+        
+        # Set SYNTH-specific attributes
+        self.text_field = text_field
+        self.include_reasoning = include_reasoning
+        self.filter_english_only = filter_english_only
     
     def _pre_process_sample(self, sample: dict) -> Optional[str]:
         """

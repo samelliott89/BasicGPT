@@ -8,6 +8,7 @@ of the GPT training pipeline.
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 from learning_rate import LearningRateConfig
+from datasets.datasetprep import DatasetName
 
 @dataclass
 class GPTConfig:
@@ -32,12 +33,15 @@ class DataConfig:
     
     Controls how data is loaded from the dataset and prepared for training.
     """
+    # Dataset selection
+    current_datasets: list[DatasetName] = field(default_factory=lambda: [DatasetName.SYNTHETIC])  # List of datasets to use
+    dataset_probabilities: Optional[list[float]] = None  # Sampling weights for each dataset (None = equal probability)
+    
+    # Data loading parameters
     max_samples: Optional[int] = 5000000  # Maximum number of samples to use (None = all)
     max_length: int = 1024  # Maximum sequence length for tokenization
     text_field: str = "synthetic_answer"  # Which field to use from dataset
     batch_size: int = 32  # Same as training config
-    include_reasoning: bool = False  # Whether to include reasoning steps in training data
-    filter_english_only: bool = True  # Filter to only English samples (uses dataset's 'language' field)
     streaming: bool = True  # Use streaming mode for large datasets
     timeout: int = 300  # Timeout in seconds for dataset download
     num_retries: int = 3  # Number of retry attempts on connection failure

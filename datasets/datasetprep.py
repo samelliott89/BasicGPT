@@ -7,11 +7,16 @@ import time
 from torch.utils.data import IterableDataset
 from datasets import load_dataset
 from datasets import IterableDataset as HfIterableDataset
-from config import DataConfig
+from config import DataConfig as data_config
 
 class DatasetName(Enum):
     SYNTHETIC = "synthetic"
     FINEWEB = "fineweb"
+    C4 = "c4"
+    OPENWEBTEXT = "openwebtext"
+    BOOKCORPUS = "bookcorpus"
+    REDPAJAMA = "redpajama"
+    PILE = "pile"
 
 class DatasetLang(StrEnum):
     ENGLISH = "en",
@@ -37,12 +42,17 @@ class DatasetPrep(IterableDataset, ABC):
     Subclasses must implement:
     - _pre_process_sample: Extract and format text from a sample dict
     """
-
     def __init__(
         self,
         dataset,
         tokenizer,
-        max_length: int,
+        max_length: Optional[int] = None,
+        batch_size: Optional[int] = None,
+        streaming: Optional[bool] = None,
+        timeout: Optional[int] = None,
+        num_retries: Optional[int] = None,
+        num_workers: Optional[int] = None,
+        num_dataset_workers: Optional[int] = None,
         **kwargs  # Allow subclasses to pass additional parameters
     ):   
         """
@@ -51,12 +61,26 @@ class DatasetPrep(IterableDataset, ABC):
         Args:
             dataset: The HuggingFace dataset (streaming or regular)
             tokenizer: Tokenizer instance for encoding text
-            max_length: Maximum sequence length
+            max_length: Maximum sequence length (defaults to data_config.max_length)
+            batch_size: Batch size for data loading (defaults to data_config.batch_size)
+            streaming: Whether to use streaming mode (defaults to data_config.streaming)
+            timeout: Timeout for dataset downloads (defaults to data_config.timeout)
+            num_retries: Number of retry attempts (defaults to data_config.num_retries)
+            num_workers: Number of parallel workers (defaults to data_config.num_workers)
+            num_dataset_workers: Number of dataset workers (defaults to data_config.num_dataset_workers)
             **kwargs: Additional parameters for subclass-specific configuration
         """
         self.dataset = dataset
         self.tokenizer = tokenizer
-        self.max_length = max_length
+        
+        # Use provided values or fall back to data_config defaults
+        self.max_length = max_length if max_length is not None else data_config.max_length
+        self.batch_size = batch_size if batch_size is not None else data_config.batch_size
+        self.streaming = streaming if streaming is not None else data_config.streaming
+        self.timeout = timeout if timeout is not None else data_config.timeout
+        self.num_retries = num_retries if num_retries is not None else data_config.num_retries
+        self.num_workers = num_workers if num_workers is not None else data_config.num_workers
+        self.num_dataset_workers = num_dataset_workers if num_dataset_workers is not None else data_config.num_dataset_workers
         
         # Store any additional kwargs for subclass use
         for key, value in kwargs.items():
@@ -153,15 +177,15 @@ class DatasetPrep(IterableDataset, ABC):
 
     @staticmethod
     def load_dataset(
-        dataset_name: str,
-        name: str = None,
-        split: str = "train",
-        streaming: bool = None,
-        num_retries: int = None,
-        timeout: int = None,
-        max_samples: Optional[int] = None,
+        dataset_name: DatasetName,
+        data_subset_name: Optional[str],
+        split: DatasetSplit = DatasetSplit.TRAIN,
+        streaming: bool = True,
+        num_retries: int = data_config.num_retries,
+        timeout: int = data_config.timeout,
+        max_samples: int = data_config.max_samples,
         use_val_split: bool = False,
-        val_split_percentage: float = 0.1,
+        val_split_percentage: Optional[float] = 0.0,
     ):
         """
         Load a dataset from HuggingFace with retry logic and train/val splitting.
@@ -188,9 +212,6 @@ class DatasetPrep(IterableDataset, ABC):
         Raises:
             FileNotFoundError: If dataset cannot be loaded after retries
         """
-        # Get defaults from DataConfig
-        data_config = DataConfig()
-        
         # Use config defaults if not specified
         if streaming is None:
             streaming = data_config.streaming
