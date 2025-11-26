@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from enum import Enum, StrEnum
 from typing import Optional
 import torch
 import os
@@ -8,27 +7,7 @@ from torch.utils.data import IterableDataset
 from datasets import load_dataset
 from datasets import IterableDataset as HfIterableDataset
 from config import DataConfig as data_config
-
-class DatasetName(Enum):
-    SYNTHETIC = "synthetic"
-    FINEWEB = "fineweb"
-    C4 = "c4"
-    OPENWEBTEXT = "openwebtext"
-    BOOKCORPUS = "bookcorpus"
-    REDPAJAMA = "redpajama"
-    PILE = "pile"
-
-class DatasetLang(StrEnum):
-    ENGLISH = "en",
-    FRENCH = "fr",
-    GERMAN = "de",
-    ITALIAN = "it",
-    SPANISH = "es",
-
-class DatasetSplit(Enum):
-    TRAIN = "train"
-    VALIDATION = "validation"
-    TEST = "test"
+from enums import DatasetName, DatasetLang, DatasetSplit
 
 class DatasetPrep(IterableDataset, ABC):
     """
@@ -196,7 +175,7 @@ class DatasetPrep(IterableDataset, ABC):
         
         Args:
             dataset_name: Name/path of the HuggingFace dataset (e.g., "PleIAs/SYNTH")
-            name: Optional dataset configuration name (e.g., "sample-10BT", "en", "default")
+            data_subset_name: Optional dataset configuration name (e.g., "sample-10BT", "en", "default")
             split: Dataset split to load ("train", "validation", etc.)
             streaming: If True, stream the dataset (default from DataConfig)
             num_retries: Number of times to retry on failure (default from DataConfig)
@@ -223,8 +202,8 @@ class DatasetPrep(IterableDataset, ABC):
             max_samples = data_config.max_samples
         
         print(f"Loading {dataset_name} dataset from Hugging Face...")
-        if name:
-            print(f"  Configuration: {name}")
+        if data_subset_name:
+            print(f"  Configuration: {data_subset_name}")
         print(f"  Split: {split}")
         if use_val_split:
             print(f"  Using VALIDATION portion (last {val_split_percentage*100:.0f}% of data)")
@@ -252,15 +231,17 @@ class DatasetPrep(IterableDataset, ABC):
                 print("Connecting to Hugging Face Hub...")
                 
                 # Build load_dataset arguments
+                # Convert enum to string value for HuggingFace API
+                split_str = split.value if isinstance(split, DatasetSplit) else split
                 load_args = {
                     "path": dataset_name,
-                    "split": split,
+                    "split": split_str,
                     "streaming": streaming,
                 }
                 
                 # Add name parameter if specified
-                if name is not None:
-                    load_args["name"] = name
+                if data_subset_name is not None:
+                    load_args["name"] = data_subset_name
                 
                 # Add download_config for non-streaming datasets
                 if not streaming:

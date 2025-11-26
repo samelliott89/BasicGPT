@@ -8,7 +8,7 @@ of the GPT training pipeline.
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 from learning_rate import LearningRateConfig
-from datasets.datasetprep import DatasetName
+from enums import DatasetName
 
 @dataclass
 class GPTConfig:
@@ -34,8 +34,14 @@ class DataConfig:
     Controls how data is loaded from the dataset and prepared for training.
     """
     # Dataset selection
-    current_datasets: list[DatasetName] = field(default_factory=lambda: [DatasetName.SYNTHETIC])  # List of datasets to use
-    dataset_probabilities: Optional[list[float]] = None  # Sampling weights for each dataset (None = equal probability)
+    # Use multiple datasets with probabilistic sampling for diverse training
+    current_datasets: list[DatasetName] = field(default_factory=lambda: [
+        DatasetName.SYNTHETIC,  # High-quality synthetic data (question/answer format)
+        DatasetName.FINEWEB,    # Web text for general language understanding
+    ])
+    # Sampling probabilities for each dataset (must match length of current_datasets)
+    # 70% SYNTH for structured learning, 30% FineWeb for diversity
+    dataset_probabilities: Optional[list[float]] = field(default_factory=lambda: [0.7, 0.3])
     
     # Data loading parameters
     max_samples: Optional[int] = 5000000  # Maximum number of samples to use (None = all)

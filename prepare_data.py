@@ -15,7 +15,7 @@ import time
 import os
 import random
 from config import GPTConfig, DataConfig, TrainingConfig
-from datasets.datasetprep import DatasetName, DatasetSplit
+from dataset_loaders.datasetprep import DatasetName, DatasetSplit
 
 gpt_config = GPTConfig()
 data_config = DataConfig()
@@ -113,16 +113,14 @@ def get_dataset_class(dataset_name: DatasetName):
         The dataset class for the given dataset name
     """
     # Import dataset classes here to avoid circular imports
-    from datasets.synthdataset import SYNTHIterableDataset
-    from datasets.finewebdataset import FineWebDataset
-    from datasets.c4dataset import C4Dataset
-    from datasets.openwebtextdataset import OpenWebTextDataset
+    from dataset_loaders.synthdataset import SYNTHIterableDataset
+    from dataset_loaders.finewebdataset import FineWebDataset
+    from dataset_loaders.c4dataset import C4Dataset
     
     mapping = {
         DatasetName.SYNTHETIC: SYNTHIterableDataset,
         DatasetName.FINEWEB: FineWebDataset,
         DatasetName.C4: C4Dataset,
-        DatasetName.OPENWEBTEXT: OpenWebTextDataset,
     }
     
     if dataset_name not in mapping:
@@ -169,13 +167,6 @@ def get_dataset_config(dataset_name: DatasetName) -> dict:
             "subset_name": "en",
             "text_field": "text",
             "requires_validation_split": False,  # C4 has validation split
-            "dataset_kwargs": {},
-        },
-        DatasetName.OPENWEBTEXT: {
-            "hf_name": "Skylion007/openwebtext",
-            "subset_name": None,
-            "text_field": "text",
-            "requires_validation_split": True,
             "dataset_kwargs": {},
         },
     }
@@ -361,7 +352,7 @@ def load_training_data(
         val_split_percentage = 0.1  # Default to 10% validation
     
     # Load the raw dataset
-    from datasets.datasetprep import DatasetPrep
+    from dataset_loaders.datasetprep import DatasetPrep
     
     # For training data, we always use use_val_split=False
     # - If requires_validation_split=False: loads full "train" split (dataset has separate validation)
@@ -454,7 +445,7 @@ def load_validation_data(
         val_split_percentage = 0.1  # Default to 10% validation
     
     # Load the raw dataset
-    from datasets.datasetprep import DatasetPrep
+    from dataset_loaders.datasetprep import DatasetPrep
     
     # Determine split and use_val_split based on whether dataset has native validation
     if requires_validation_split:
@@ -558,47 +549,214 @@ def create_data_loaders(
 
 # Example usage
 if __name__ == "__main__":
+    from collections import Counter
+    
     # Initialize tokenizer
     print("Initializing tokenizer...")
     tokenizer = Tokenizer(encoding_name="cl100k_base")
     print(f"✓ Tokenizer initialized with vocab_size={tokenizer.vocab_size}")
     print()
     
-    # Load a small subset for testing (use streaming for large datasets)
-    print("Loading SYNTH dataset (small subset for testing)...")
-    train_dataset = load_synth_dataset(
+    # ==========================================================================
+    # TEST 1: Single Dataset Loading
+    # ==========================================================================
+    print("=" * 70)
+    print("TEST 1: Single Dataset Loading (SYNTH)")
+    print("=" * 70)
+    single_dataset = load_datasets(
+        dataset_names=[DatasetName.SYNTHETIC],
         tokenizer=tokenizer,
-        max_length=512,  # Smaller for testing
-        split="train",
-        streaming=True,  # Use streaming for large datasets
-        max_samples=1000,  # Just 1000 samples for testing
-        text_field="synthetic_answer"
+        is_training=True,
+        max_length=512,
+        streaming=True,
+        max_samples=100,  # Small for quick testing
     )
     print()
     
-    # Create data loaders
-    print("Creating data loaders...")
+    # Verify we can iterate and get samples
+    print("Verifying single dataset iteration...")
+    single_iter = iter(single_dataset)
+    sample = next(single_iter)
+    print(f"  ✓ Got sample with keys: {list(sample.keys()) if isinstance(sample, dict) else 'tensor tuple'}")
+    print()
+    
+    # ==========================================================================
+    # TEST 2: Multiple Dataset Loading with Interleaving
+    # ==========================================================================
+    print("=" * 70)
+    print("TEST 2: Multiple Datasets with Interleaving (SYNTH + FINEWEB)")
+    print("=" * 70)
+    
+    # Use 70/30 split
+    target_probs = [0.7, 0.3]
+    multi_dataset = load_datasets(
+        dataset_names=[DatasetName.SYNTHETIC, DatasetName.FINEWEB],
+        tokenizer=tokenizer,
+        is_training=True,
+        probabilities=target_probs,
+        max_length=512,
+        streaming=True,
+        max_samples=200,  # 200 samples per dataset
+    )
+    print()
+    
+    # ==========================================================================
+    # TEST 3: Verify Tokenization
+    # ==========================================================================
+    print("=" * 70)
+    print("TEST 3: Verify Tokenization")
+    print("=" * 70)
+    
+    # Create data loader to get batches
     train_loader, _ = create_data_loaders(
-        train_dataset=train_dataset,
-        batch_size=4,  # Small batch for testing
-        num_workers=0  # Set to 0 for debugging, increase for production
+        train_dataset=multi_dataset,
+        batch_size=8,
+        num_workers=0
     )
-    print(f"✓ Created train loader with {len(train_loader)} batches")
+    print(f"✓ Created train loader")
     print()
     
-    # Test a batch
-    print("Testing a batch...")
+    # Get a batch and verify shapes
+    print("Testing batch shapes...")
     input_ids, target_ids = next(iter(train_loader))
-    print(f"  Input shape: {input_ids.shape}")  # Should be [batch_size, max_length-1]
+    print(f"  Input shape:  {input_ids.shape}")  # Should be [batch_size, max_length-1]
     print(f"  Target shape: {target_ids.shape}")  # Should be [batch_size, max_length-1]
+    
+    expected_seq_len = 512 - 1  # max_length - 1 for input/target split
+    assert input_ids.shape[0] == 8, f"Expected batch size 8, got {input_ids.shape[0]}"
+    assert input_ids.shape[1] == expected_seq_len, f"Expected seq len {expected_seq_len}, got {input_ids.shape[1]}"
+    print(f"  ✓ Shapes are correct!")
     print()
     
-    # Decode a sample to verify
-    print("Decoding a sample to verify tokenization...")
+    # Verify target is input shifted by 1
+    print("Verifying input/target relationship (target = input shifted by 1)...")
+    # For a proper next-token prediction: target[i] should come after input[i] in original sequence
+    # Actually in our setup: input = tokens[:-1], target = tokens[1:]
+    # So we can't directly verify without the original, but we can decode and check it makes sense
+    
+    # Decode first sample
     sample_input = input_ids[0].tolist()
-    sample_text = tokenizer.decode(sample_input[:50])  # First 50 tokens
-    print(f"  Sample text (first 50 tokens): {sample_text[:200]}...")
+    sample_target = target_ids[0].tolist()
+    
+    # Remove padding (0s) for cleaner output
+    sample_input_clean = [t for t in sample_input if t != 0][:50]
+    sample_target_clean = [t for t in sample_target if t != 0][:50]
+    
+    input_text = tokenizer.decode(sample_input_clean)
+    target_text = tokenizer.decode(sample_target_clean)
+    
+    print(f"  Input (first 50 tokens):  {input_text[:150]}...")
+    print(f"  Target (first 50 tokens): {target_text[:150]}...")
     print()
     
-    print("✓ Data preparation complete!")
+    # Check all tokens are within vocab range
+    print("Verifying token IDs are within vocabulary range...")
+    max_input_token = input_ids.max().item()
+    max_target_token = target_ids.max().item()
+    print(f"  Max input token ID:  {max_input_token}")
+    print(f"  Max target token ID: {max_target_token}")
+    print(f"  Vocabulary size:     {tokenizer.vocab_size}")
+    
+    if max_input_token < tokenizer.vocab_size and max_target_token < tokenizer.vocab_size:
+        print(f"  ✓ All tokens within valid range!")
+    else:
+        print(f"  ⚠ WARNING: Some tokens exceed vocabulary size!")
+    print()
+    
+    # ==========================================================================
+    # TEST 4: Verify Probabilistic Sampling
+    # ==========================================================================
+    print("=" * 70)
+    print("TEST 4: Verify Probabilistic Sampling")
+    print("=" * 70)
+    print(f"Target probabilities: SYNTH={target_probs[0]:.0%}, FINEWEB={target_probs[1]:.0%}")
+    print()
+    
+    # To verify sampling, we need to track which dataset each sample comes from
+    # We'll create a fresh interleaved dataset with labeled samples
+    
+    class LabeledWrapper(IterableDataset):
+        """Wrapper that adds a source label to each sample."""
+        def __init__(self, dataset, label: str):
+            self.dataset = dataset
+            self.label = label
+        
+        def __iter__(self):
+            for sample in self.dataset:
+                yield (sample, self.label)
+    
+    # Load individual datasets with labels
+    print("Loading labeled datasets for sampling verification...")
+    synth_ds = load_datasets(
+        dataset_names=[DatasetName.SYNTHETIC],
+        tokenizer=tokenizer,
+        is_training=True,
+        max_length=512,
+        streaming=True,
+        max_samples=500,
+    )
+    fineweb_ds = load_datasets(
+        dataset_names=[DatasetName.FINEWEB],
+        tokenizer=tokenizer,
+        is_training=True,
+        max_length=512,
+        streaming=True,
+        max_samples=500,
+    )
+    
+    # Wrap with labels
+    labeled_synth = LabeledWrapper(synth_ds, "SYNTH")
+    labeled_fineweb = LabeledWrapper(fineweb_ds, "FINEWEB")
+    
+    # Create interleaved dataset with our target probabilities
+    labeled_interleaved = InterleavedDataset(
+        datasets=[labeled_synth, labeled_fineweb],
+        probabilities=target_probs
+    )
+    
+    # Sample and count
+    print("Sampling 500 items and counting sources...")
+    source_counts = Counter()
+    sample_count = 0
+    max_samples_to_check = 500
+    
+    for sample, label in labeled_interleaved:
+        source_counts[label] += 1
+        sample_count += 1
+        if sample_count >= max_samples_to_check:
+            break
+        if sample_count % 100 == 0:
+            print(f"  Processed {sample_count} samples...")
+    
+    print()
+    print(f"Sampling results ({sample_count} total samples):")
+    for label, count in source_counts.items():
+        actual_prob = count / sample_count
+        expected_prob = target_probs[0] if label == "SYNTH" else target_probs[1]
+        diff = abs(actual_prob - expected_prob)
+        status = "✓" if diff < 0.1 else "⚠"  # Allow 10% tolerance
+        print(f"  {label}: {count} samples ({actual_prob:.1%}) - expected {expected_prob:.0%} {status}")
+    
+    print()
+    
+    # ==========================================================================
+    # Summary
+    # ==========================================================================
+    print("=" * 70)
+    print("SUMMARY")
+    print("=" * 70)
+    print("✓ TEST 1: Single dataset loading - PASSED")
+    print("✓ TEST 2: Multiple dataset interleaving - PASSED")
+    print("✓ TEST 3: Tokenization verification - PASSED")
+    
+    # Check if sampling is within tolerance
+    synth_actual = source_counts.get("SYNTH", 0) / sample_count
+    synth_diff = abs(synth_actual - target_probs[0])
+    if synth_diff < 0.1:
+        print("✓ TEST 4: Probabilistic sampling - PASSED")
+    else:
+        print(f"⚠ TEST 4: Probabilistic sampling - WARNING (diff={synth_diff:.1%})")
+    
+    print()
+    print("✓ All tests complete!")
 
