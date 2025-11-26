@@ -39,6 +39,19 @@ accelerate launch train.py         # Multi-GPU
 
 ## Vast.ai / Remote Training
 
+### Upload code to Vast.ai (from local)
+
+```bash
+# Replace <port> and <ip> with your Vast.ai instance details
+rsync -avz -e "ssh -p <port>" \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    --exclude='checkpoints' \
+    --exclude='.git' \
+    --exclude='.venv' \
+    ./ root@<ip>:/root/BasicGPT/
+```
+
 ### Setup & Train (on remote)
 
 ```bash

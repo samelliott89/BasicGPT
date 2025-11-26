@@ -10,6 +10,7 @@ The training pipeline:
 2. Creates the GPT model
 3. Trains with distributed data parallel (if multi-GPU)
 4. Saves checkpoints
+5. Logs metrics to Weights & Biases (optional)
 """
 
 import torch
@@ -17,6 +18,7 @@ import torch.nn.functional as F
 from pathlib import Path
 from datetime import datetime
 from functools import partial
+import os
 
 from accelerate import Accelerator
 from accelerate.utils import set_seed
@@ -26,6 +28,14 @@ from gpt import GPT, train_epoch, evaluate
 from prepare_data import load_datasets, create_data_loaders
 from config import GPTConfig, TrainingConfig, DataConfig
 from learning_rate import get_lr
+
+# Optional W&B import
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+    print("wandb not installed. Run 'pip install wandb' for logging.")
 
 
 def save_checkpoint(accelerator, checkpoint_path, epoch, total_batches, model, optimizer, scheduler, 
@@ -102,6 +112,7 @@ def main():
     accelerator = Accelerator(
         mixed_precision="bf16",  # Use bfloat16 for modern GPUs (Blackwell, A100)
         gradient_accumulation_steps=4,  # Will be overridden by config
+        log_with="wandb" if WANDB_AVAILABLE else None,
     )
     
     # Set seed for reproducibility across all processes
@@ -111,6 +122,40 @@ def main():
     training_config = TrainingConfig()
     gpt_config = GPTConfig()
     data_config = DataConfig()
+    
+    # Initialize W&B (only on main process)
+    if WANDB_AVAILABLE and accelerator.is_main_process:
+        # Create run name with timestamp
+        run_name = f"gpt-{gpt_config.n_layers}L-{gpt_config.d_model}D-{datetime.now().strftime('%m%d-%H%M')}"
+        
+        # Initialize W&B through accelerator
+        accelerator.init_trackers(
+            project_name="BasicGPT",
+            config={
+                # Model config
+                "model/vocab_size": gpt_config.vocab_size,
+                "model/d_model": gpt_config.d_model,
+                "model/n_heads": gpt_config.n_heads,
+                "model/n_layers": gpt_config.n_layers,
+                "model/max_length": gpt_config.max_length,
+                "model/dropout": gpt_config.dropout,
+                # Training config
+                "training/batch_size": training_config.batch_size,
+                "training/gradient_accumulation": training_config.gradient_accumulation_steps,
+                "training/epochs": training_config.epochs,
+                "training/weight_decay": training_config.weight_decay,
+                # Data config
+                "data/datasets": [ds.value for ds in data_config.current_datasets],
+                "data/probabilities": data_config.dataset_probabilities,
+                "data/max_samples": data_config.max_samples,
+                "data/max_length": data_config.max_length,
+                # Hardware
+                "hardware/num_gpus": accelerator.num_processes,
+                "hardware/mixed_precision": accelerator.mixed_precision,
+            },
+            init_kwargs={"wandb": {"name": run_name}},
+        )
+        print(f"✓ W&B initialized: {run_name}")
     
     # Update accelerator with config values
     accelerator.gradient_accumulation_steps = training_config.gradient_accumulation_steps
@@ -357,13 +402,25 @@ def main():
             elif val_loss is not None:
                 print(f"  Val loss did not improve (best: {best_val_loss:.4f})")
         
+        # Log epoch summary to W&B
+        accelerator.log({
+            "epoch/train_loss": train_loss,
+            "epoch/val_loss": val_loss if val_loss else 0,
+            "epoch/number": epoch + 1,
+        }, step=total_batches)
+        
         # Sync all processes before next epoch
         accelerator.wait_for_everyone()
+    
+    # End W&B run
+    accelerator.end_training()
     
     if accelerator.is_main_process:
         print("\n" + "=" * 60)
         print("Training complete!")
         print(f"Checkpoints saved in: {save_dir}")
+        if WANDB_AVAILABLE:
+            print(f"View training logs at: https://wandb.ai")
 
 
 def train_epoch_accelerate(
@@ -426,23 +483,48 @@ def train_epoch_accelerate(
         # Track if we did an optimizer step
         if accelerator.sync_gradients:
             optimizer_steps += 1
+            current_lr = scheduler.get_last_lr()[0]
             
             # Log training loss
-            if optimizer_steps % log_every_n_steps == 0 and accelerator.is_main_process:
+            if optimizer_steps % log_every_n_steps == 0:
                 if accelerator.device.type == "cuda":
                     memory_allocated = torch.cuda.memory_allocated() / (1024**3)
                     memory_reserved = torch.cuda.memory_reserved() / (1024**3)
-                    print(f"  Step {optimizer_steps} (Batch {batch_idx + 1}), "
-                          f"Loss: {loss.item():.4f}, "
-                          f"GPU Memory: {memory_allocated:.2f}GB / {memory_reserved:.2f}GB")
                 else:
-                    print(f"  Step {optimizer_steps} (Batch {batch_idx + 1}), Loss: {loss.item():.4f}")
+                    memory_allocated = 0
+                    memory_reserved = 0
+                
+                # Log to W&B
+                accelerator.log({
+                    "train/loss": loss.item(),
+                    "train/learning_rate": current_lr,
+                    "train/epoch": epoch,
+                    "train/step": optimizer_steps,
+                    "system/gpu_memory_allocated_gb": memory_allocated,
+                    "system/gpu_memory_reserved_gb": memory_reserved,
+                }, step=optimizer_steps)
+                
+                # Print to console
+                if accelerator.is_main_process:
+                    if accelerator.device.type == "cuda":
+                        print(f"  Step {optimizer_steps} (Batch {batch_idx + 1}), "
+                              f"Loss: {loss.item():.4f}, LR: {current_lr:.2e}, "
+                              f"GPU: {memory_allocated:.2f}GB")
+                    else:
+                        print(f"  Step {optimizer_steps} (Batch {batch_idx + 1}), Loss: {loss.item():.4f}")
             
             # Run validation
             if val_loader is not None and optimizer_steps % val_check_interval == 0:
                 if accelerator.is_main_process:
                     print(f"\n  Running validation at step {optimizer_steps}...")
                 val_loss = evaluate_validation(model, val_loader, accelerator)
+                
+                # Log validation loss to W&B
+                accelerator.log({
+                    "val/loss": val_loss,
+                    "val/perplexity": torch.exp(torch.tensor(val_loss)).item(),
+                }, step=optimizer_steps)
+                
                 if accelerator.is_main_process:
                     print(f"  Validation Loss: {val_loss:.4f}")
                 model.train()

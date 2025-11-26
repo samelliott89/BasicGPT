@@ -13,8 +13,8 @@ set -e
 # Configuration - Edit these for your Vast.ai setup
 # ============================================
 REMOTE_USER="root"
-REMOTE_HOST="your-vast-ai-ip"
-REMOTE_PORT="your-port"
+REMOTE_HOST="207.180.148.74"
+REMOTE_PORT="45778"
 REMOTE_PATH="/root/BasicGPT/checkpoints/"
 LOCAL_PATH="./checkpoints/"
 SSH_KEY="~/.ssh/id_ed25519"

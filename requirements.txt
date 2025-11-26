@@ -2,3 +2,4 @@ tiktoken
 torch
 datasets
 accelerate
+wandb

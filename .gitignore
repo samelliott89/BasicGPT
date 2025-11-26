@@ -2,6 +2,7 @@ __pycache__/
 checkpoints/
 logs/
 results/
+wandb/
 .vscode/
 *.pyc
 *.pyo

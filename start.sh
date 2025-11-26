@@ -5,8 +5,9 @@
 # This script:
 # 1. Installs dependencies
 # 2. Detects GPU configuration
-# 3. Tests checkpoint directory setup
-# 4. Launches training with Accelerate
+# 3. Logs into Weights & Biases
+# 4. Tests checkpoint directory setup
+# 5. Launches training with Accelerate
 #
 # Usage:
 #   ./start.sh                 # Full setup + training
@@ -15,6 +16,12 @@
 #
 
 set -e  # Exit on error
+
+# ============================================
+# Configuration - W&B API Key
+# ============================================
+# Set your W&B API key here (get it from https://wandb.ai/settings)
+WANDB_API_KEY="8ab5900baef009c2bd6c9ed237c3319f3b476283"
 
 # ============================================
 # Parse arguments
@@ -88,6 +95,31 @@ install_dependencies() {
     
     echo ""
     echo "✓ Dependencies installed"
+}
+
+setup_wandb() {
+    print_header "Setting Up Weights & Biases"
+    
+    # Check if API key is set
+    if [ "$WANDB_API_KEY" = "your-api-key-here" ] || [ -z "$WANDB_API_KEY" ]; then
+        echo "⚠️  W&B API key not set in start.sh"
+        echo "Training will continue without W&B logging."
+        echo ""
+        echo "To enable W&B, edit start.sh and set:"
+        echo "  WANDB_API_KEY=\"your-key-from-wandb.ai/settings\""
+        return 0
+    fi
+    
+    # Login to W&B
+    echo "Logging into Weights & Biases..."
+    wandb login "$WANDB_API_KEY" --relogin
+    
+    if [ $? -eq 0 ]; then
+        echo "✓ W&B login successful"
+        echo "  Metrics will be logged to: https://wandb.ai"
+    else
+        echo "⚠️  W&B login failed, continuing without logging"
+    fi
 }
 
 setup_checkpoints() {
@@ -194,13 +226,16 @@ else
     echo "Skipping dependency installation (--skip-deps)"
 fi
 
-# Step 3: Setup checkpoint directory
+# Step 3: Setup W&B
+setup_wandb
+
+# Step 4: Setup checkpoint directory
 setup_checkpoints
 
-# Step 4: Show sync instructions
+# Step 5: Show sync instructions
 show_sync_instructions
 
-# Step 5: Run training (unless dry-run mode)
+# Step 6: Run training (unless dry-run mode)
 if [ "$DRY_RUN" = true ]; then
     print_header "Dry Run Complete"
     echo "Everything is set up. Run without --dry-run to start training."
