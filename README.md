@@ -2,7 +2,7 @@
 
 A from-scratch GPT implementation for learning. Built alongside Cursor.
 NOT a `build me a GPT, no mistakes` codebase, more of piece by piece
- `lets add a class called datasetprep to share and prepare each invidual dataset`
+ `lets add a class called datasetprep to share and prepare each invidual dataset`.
 Supports single and multi-GPU training via Hugging Face Accelerate.
 
 ## Quick Start
