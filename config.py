@@ -34,19 +34,22 @@ class DataConfig:
     Controls how data is loaded from the dataset and prepared for training.
     """
     # Dataset selection
-    # Use multiple datasets with probabilistic sampling for diverse training
+    # Use multiple datasets with probabilistic sampling for diverse pre-training
+    # Note: SYNTH is for post-training/fine-tuning, not pre-training
     current_datasets: list[DatasetName] = field(default_factory=lambda: [
-        DatasetName.SYNTHETIC,  # High-quality synthetic data (question/answer format)
-        DatasetName.FINEWEB,    # Web text for general language understanding
+        DatasetName.FINEWEB,    # Web text - high quality, curated
+        DatasetName.C4,         # Common Crawl - large scale, diverse
     ])
     # Sampling probabilities for each dataset (must match length of current_datasets)
-    # 70% SYNTH for structured learning, 30% FineWeb for diversity
-    dataset_probabilities: Optional[list[float]] = field(default_factory=lambda: [0.7, 0.3])
+    # 60% FineWeb (higher quality), 40% C4 (more diversity)
+    dataset_probabilities: Optional[list[float]] = field(default_factory=lambda: [0.6, 0.4])
     
     # Data loading parameters
-    max_samples: Optional[int] = 5000000  # Maximum number of samples to use (None = all)
+    # Chinchilla scaling: ~20 tokens per parameter, so 47M params → ~1B tokens → ~2M samples
+    # With larger models or more compute, increase this
+    max_samples: Optional[int] = 10000000  # 10M samples for pre-training
     max_length: int = 1024  # Maximum sequence length for tokenization
-    text_field: str = "synthetic_answer"  # Which field to use from dataset
+    text_field: str = "text"  # Which field to use from dataset (FineWeb and C4 use "text")
     batch_size: int = 32  # Same as training config
     streaming: bool = True  # Use streaming mode for large datasets
     timeout: int = 300  # Timeout in seconds for dataset download

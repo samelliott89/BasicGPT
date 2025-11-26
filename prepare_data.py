@@ -194,8 +194,8 @@ def load_datasets(
     
     If multiple datasets are provided, they will be interleaved using
     the InterleavedDataset class with configurable sampling probabilities.
-    
-    Args:
+        
+        Args:
         dataset_names: List of DatasetName enums to load
         tokenizer: Tokenizer instance for encoding text
         is_training: If True, load training data; if False, load validation data
@@ -207,7 +207,7 @@ def load_datasets(
         max_samples: Maximum samples per dataset (default from DataConfig)
         val_split_percentage: Validation split percentage (default: 0.1 for datasets requiring split)
         
-    Returns:
+        Returns:
         Single dataset or InterleavedDataset containing all requested datasets
         
     Example:
@@ -260,7 +260,7 @@ def load_datasets(
         
         loaded_datasets.append(dataset)
         print(f"✓ Loaded {dataset_name.value} dataset")
-    
+        
     # If only one dataset, return it directly
     if len(loaded_datasets) == 1:
         return loaded_datasets[0]
@@ -361,7 +361,7 @@ def load_training_data(
         dataset_name=dataset_name,
         data_subset_name=name,
         split=DatasetSplit.TRAIN,
-        streaming=streaming,
+                streaming=streaming,
         num_retries=num_retries,
         timeout=timeout,
         max_samples=max_samples,
@@ -477,7 +477,7 @@ def load_validation_data(
         text_field=text_field,
         **dataset_kwargs
     )
-    
+
 
 def create_data_loaders(
     train_dataset,
