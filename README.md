@@ -1,6 +1,8 @@
 # BasicGPT
 
-A from-scratch GPT implementation for learning and experimentation. Supports single and multi-GPU training via Hugging Face Accelerate.
+A from-scratch GPT implementation for learning and experimentation. Built alongside Cursor/Anit-gravity.
+A lot of comments and print()'s to help guide me and understand what is happening.
+Supports single and multi-GPU training via Hugging Face Accelerate.
 
 ## Quick Start
 
@@ -13,36 +15,6 @@ python train.py
 
 # Train (multi-GPU)
 accelerate launch train.py
-```
-
----
-
-## Project Structure
-
-```
-BasicGPT/
-├── train.py              # Main training script (supports multi-GPU)
-├── generate.py           # Text generation from checkpoints
-├── evals.py              # Model evaluation (perplexity, accuracy)
-├── gpt.py                # GPT model architecture
-├── config.py             # All configuration classes
-├── prepare_data.py       # Dataset loading & preprocessing
-├── tokenizer.py          # Tokenizer wrapper (tiktoken)
-├── device.py             # Device detection utilities
-├── learning_rate.py      # Learning rate schedule
-├── enums.py              # Dataset enums
-├── utils.py              # Utility functions
-├── dataset_loaders/      # Dataset-specific loaders
-│   ├── synthdataset.py   # SYNTH dataset
-│   ├── finewebdataset.py # FineWeb dataset
-│   ├── c4dataset.py      # C4 dataset
-│   └── ...
-├── scripts/              # Helper scripts
-│   ├── calc_params.py    # Calculate model parameters
-│   ├── calc_lr_config.py # Calculate LR schedule
-│   └── vast.sh           # Vast.ai deployment
-├── start.sh              # Setup & run script
-└── checkpoints/          # Saved model checkpoints
 ```
 
 ---
@@ -66,7 +38,7 @@ accelerate launch --num_processes=8 train.py
 ```
 
 **What it does:**
-- Loads datasets (SYNTH + FineWeb by default, 70/30 split)
+- Loads datasets (array with set of config probabilities)
 - Creates GPT model
 - Trains with gradient accumulation
 - Saves checkpoints periodically and at epoch end
@@ -177,39 +149,6 @@ mixed_precision: bf16
 
 All settings are in `config.py`. Key configurations:
 
-### Model Architecture (`GPTConfig`)
-
-```python
-vocab_size: int = 100277    # Vocabulary size (tiktoken cl100k_base)
-d_model: int = 256          # Embedding dimension
-n_heads: int = 8            # Attention heads
-n_layers: int = 16          # Transformer layers
-max_length: int = 1024      # Context window
-dropout: float = 0.1        # Dropout rate
-```
-
-### Training (`TrainingConfig`)
-
-```python
-batch_size: int = 32                    # Per-GPU batch size
-gradient_accumulation_steps: int = 4    # Steps before optimizer update
-epochs: int = 3                         # Training epochs
-weight_decay: float = 0.01              # AdamW weight decay
-max_grad_norm: float = 1.0              # Gradient clipping
-```
-
-### Data (`DataConfig`)
-
-```python
-current_datasets: [SYNTHETIC, FINEWEB]  # Datasets to use
-dataset_probabilities: [0.7, 0.3]       # Sampling weights
-max_samples: int = 5000000              # Samples per dataset
-max_length: int = 1024                  # Sequence length
-streaming: bool = True                  # Stream from HuggingFace
-```
-
----
-
 ## Vast.ai Deployment
 
 ### 1. Rent GPUs
@@ -287,37 +226,9 @@ For A100 40GB, you may need to reduce `batch_size` to 16-24.
 
 Checkpoints are saved to `./checkpoints/` with this structure:
 
-```
-checkpoints/
-├── data-5m-batch-10000-11-26-2025-14-30/
-│   └── checkpoint.pt
-├── data-5m-batch-20000-11-26-2025-15-00/
-│   └── checkpoint.pt
-└── checkpoint_best.pt    # Best validation loss
-```
-
-Each checkpoint contains:
-- `model_state_dict` - Model weights
-- `optimizer_state_dict` - Optimizer state
-- `scheduler_state_dict` - LR scheduler state
-- `gpt_config` - Model architecture
-- `training_config` - Training hyperparameters
-- `train_loss`, `val_loss` - Loss values
-- `epoch`, `total_batches` - Training progress
-
----
-
 ## Datasets
 
-Currently supported datasets:
-
-| Dataset | Description | Default Weight |
-|---------|-------------|----------------|
-| `SYNTHETIC` | PleIAs/SYNTH - High-quality Q&A pairs | 70% |
-| `FINEWEB` | HuggingFaceFW/fineweb - Web text | 30% |
-| `C4` | allenai/c4 - Colossal Clean Crawled Corpus | - |
-
-Datasets are streamed from HuggingFace Hub (no local download required).
+Datasets are supported mainly through HuggingFace infra, supports multi-dataset with probabilistic config.
 
 ### Changing Datasets
 
@@ -349,22 +260,6 @@ Located in `scripts/`:
 | `verify_lr.py` | Visualize learning rate schedule |
 | `clean_data.py` | Data cleaning utilities |
 | `vast.sh` | Vast.ai SSH/rsync commands |
-
----
-
-## Requirements
-
-```
-torch>=2.0
-tiktoken
-datasets
-accelerate
-```
-
-Install with:
-```bash
-pip install -r requirements.txt
-```
 
 ---
 
