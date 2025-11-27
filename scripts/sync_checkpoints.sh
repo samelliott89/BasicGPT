@@ -13,14 +13,17 @@
 set -e
 
 # ============================================
-# CONFIGURATION - Edit these for your setup
+# Load configuration
 # ============================================
-REMOTE_USER="root"
-REMOTE_HOST="your-vast-ai-ip"
-REMOTE_PORT="your-port"
-REMOTE_PATH="/root/BasicGPT/checkpoints/"
-LOCAL_PATH="./checkpoints/"
-SSH_KEY="~/.ssh/id_ed25519"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/vastconfig.sh"
+
+# Map config to local variables
+REMOTE_USER="$VAST_USER"
+REMOTE_HOST="$VAST_HOST"
+REMOTE_PORT="$VAST_PORT"
+REMOTE_PATH="$VAST_PATH/checkpoints/"
+LOCAL_PATH="$LOCAL_CHECKPOINT_PATH/"
 
 # ============================================
 # Parse arguments
@@ -45,11 +48,10 @@ for arg in "$@"; do
             echo "  --delete    Delete checkpoints from remote after successful download"
             echo "  --watch     Continuously watch for new checkpoints (every 60s)"
             echo ""
-            echo "Configuration (edit script):"
-            echo "  REMOTE_HOST: $REMOTE_HOST"
-            echo "  REMOTE_PORT: $REMOTE_PORT"
-            echo "  REMOTE_PATH: $REMOTE_PATH"
-            echo "  LOCAL_PATH:  $LOCAL_PATH"
+            echo "Configuration (edit scripts/vastconfig.sh):"
+            echo "  VAST_HOST: $VAST_HOST"
+            echo "  VAST_PORT: $VAST_PORT"
+            echo "  VAST_PATH: $VAST_PATH"
             exit 0
             ;;
     esac
@@ -65,25 +67,60 @@ sync_checkpoints() {
     # Create local directory if it doesn't exist
     mkdir -p "$LOCAL_PATH"
     
-    # Rsync checkpoints from remote
-    # -a: archive mode (preserves permissions, timestamps)
-    # -v: verbose
-    # -z: compress during transfer
-    # --progress: show progress
-    rsync -avz --progress \
-        -e "ssh -p $REMOTE_PORT -i $SSH_KEY" \
-        "$REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH" \
-        "$LOCAL_PATH"
+    # Show what we're syncing
+    echo "From: $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH"
+    echo "To:   $LOCAL_PATH"
+    echo ""
     
-    if [ $? -eq 0 ]; then
-        echo "✓ Sync completed successfully"
+    # First, list what's on remote with sizes
+    echo "Remote checkpoints:"
+    ssh -p "$REMOTE_PORT" -i "$SSH_KEY" "$REMOTE_USER@$REMOTE_HOST" \
+        "ls -lah $REMOTE_PATH/*/checkpoint.pt 2>/dev/null || echo 'No checkpoint.pt files found'" || true
+    echo ""
+    
+    # Use scp to copy each checkpoint folder (more reliable than rsync for some setups)
+    # First get list of checkpoint folders
+    FOLDERS=$(ssh -p "$REMOTE_PORT" -i "$SSH_KEY" "$REMOTE_USER@$REMOTE_HOST" \
+        "ls -d ${REMOTE_PATH}data-* 2>/dev/null" || true)
+    
+    if [ -z "$FOLDERS" ]; then
+        echo "No checkpoint folders found on remote"
+        return 0
+    fi
+    
+    for folder in $FOLDERS; do
+        folder_name=$(basename "$folder")
+        local_folder="$LOCAL_PATH/$folder_name"
         
-        if [ "$DELETE_AFTER_SYNC" = true ]; then
-            delete_remote_checkpoints
+        # Check if we already have this checkpoint locally
+        if [ -f "$local_folder/checkpoint.pt" ]; then
+            echo "  ⏭️  Skipping $folder_name (already exists locally)"
+            continue
         fi
-    else
-        echo "✗ Sync failed!"
-        return 1
+        
+        echo "  📥 Downloading $folder_name..."
+        mkdir -p "$local_folder"
+        
+        # Copy the checkpoint.pt file
+        scp -P "$REMOTE_PORT" -i "$SSH_KEY" \
+            "$REMOTE_USER@$REMOTE_HOST:$folder/checkpoint.pt" \
+            "$local_folder/checkpoint.pt"
+        
+        if [ $? -eq 0 ]; then
+            echo "     ✓ Downloaded checkpoint.pt"
+        else
+            echo "     ✗ Failed to download"
+        fi
+    done
+    
+    echo ""
+    echo "Local checkpoints:"
+    ls -lah "$LOCAL_PATH"/*/checkpoint.pt 2>/dev/null || echo "No local checkpoints yet"
+    echo ""
+    echo "✓ Sync completed"
+    
+    if [ "$DELETE_AFTER_SYNC" = true ]; then
+        delete_remote_checkpoints
     fi
 }
 
@@ -129,6 +166,7 @@ show_status() {
     echo "Checkpoint Sync Status"
     echo "============================================"
     echo "Remote: $REMOTE_USER@$REMOTE_HOST:$REMOTE_PORT"
+    echo "Path: $REMOTE_PATH"
     echo "Delete after sync: $DELETE_AFTER_SYNC"
     echo "Watch mode: $WATCH_MODE"
     echo "============================================"
@@ -158,4 +196,3 @@ fi
 
 echo ""
 echo "Done!"
-

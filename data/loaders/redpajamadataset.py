@@ -1,6 +1,7 @@
 import torch
 from typing import Optional
-from dataset_loaders.datasetprep import DatasetPrep, DatasetLang
+
+from data.loaders.datasetprep import DatasetPrep, DatasetLang
 from config import DataConfig
 
 # Custom config overrides (optional)
@@ -8,15 +9,15 @@ from config import DataConfig
 # CUSTOM_MAX_LENGTH = 512
 # CUSTOM_TEXT_FIELD = "text"
 
-class PileDataset(DatasetPrep):
+class RedPajamaDataset(DatasetPrep):
     """
-    A PyTorch IterableDataset class for the Pile dataset.
+    A PyTorch IterableDataset class for the RedPajama dataset.
     
     Inherits common tokenization and iteration logic from DatasetPrep.
-    Implements Pile-specific text preprocessing.
+    Implements RedPajama-specific text preprocessing.
     
-    The Pile is a large, diverse, open-source language modeling dataset
-    created by EleutherAI, consisting of 22 diverse high-quality subsets.
+    RedPajama is a large-scale open dataset for training large language models,
+    containing data from multiple sources including CommonCrawl, C4, GitHub, etc.
     """
     
     def __init__(
@@ -28,7 +29,7 @@ class PileDataset(DatasetPrep):
         language: DatasetLang = DatasetLang.ENGLISH
     ):
         """
-        Initialize the Pile dataset.
+        Initialize the RedPajama dataset.
         
         Args:
             dataset: The HuggingFace dataset (streaming or regular)
@@ -48,14 +49,14 @@ class PileDataset(DatasetPrep):
     
     def _pre_process_sample(self, sample: dict) -> Optional[str]:
         """
-        Extract and preprocess text from a Pile sample.
+        Extract and preprocess text from a RedPajama sample.
         
-        Pile samples have a text field and metadata about which subset they come from.
-        This method can be extended to add subset-specific filtering or
+        RedPajama samples have a text field and metadata about the source.
+        This method can be extended to add source-specific filtering or
         preprocessing logic.
         
         Args:
-            sample: A dictionary containing the Pile sample
+            sample: A dictionary containing the RedPajama sample
             
         Returns:
             The preprocessed text string, or None if the sample should be skipped
@@ -67,9 +68,9 @@ class PileDataset(DatasetPrep):
         if not text or len(text.strip()) == 0:
             return None
         
-        # Optional: Filter by pile_set_name (subset)
-        # pile_set = sample.get('meta', {}).get('pile_set_name', '')
-        # if pile_set == 'Github':
+        # Optional: Filter by metadata (e.g., source type)
+        # meta = sample.get('meta', {})
+        # if meta.get('redpajama_set_name') == 'RedPajamaGithub':
         #     # Could add special handling for code
         #     pass
         

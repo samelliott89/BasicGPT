@@ -10,14 +10,17 @@
 set -e
 
 # ============================================
-# Configuration - Edit these for your Vast.ai setup
+# Load configuration
 # ============================================
-REMOTE_USER="root"
-REMOTE_HOST="207.180.148.74"
-REMOTE_PORT="45778"
-REMOTE_PATH="/root/BasicGPT/checkpoints/"
-LOCAL_PATH="./checkpoints/"
-SSH_KEY="~/.ssh/id_ed25519"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/vastconfig.sh"
+
+# Map config to local variables
+REMOTE_USER="$VAST_USER"
+REMOTE_HOST="$VAST_HOST"
+REMOTE_PORT="$VAST_PORT"
+REMOTE_PATH="$VAST_PATH/checkpoints/"
+LOCAL_PATH="$LOCAL_CHECKPOINT_PATH/"
 
 # ============================================
 # Main
@@ -43,9 +46,11 @@ else
     echo ""
     echo "  Please check:"
     echo "    - Is the Vast.ai machine running?"
-    echo "    - Is REMOTE_HOST correct? (currently: $REMOTE_HOST)"
-    echo "    - Is REMOTE_PORT correct? (currently: $REMOTE_PORT)"
+    echo "    - Is VAST_HOST correct? (currently: $REMOTE_HOST)"
+    echo "    - Is VAST_PORT correct? (currently: $REMOTE_PORT)"
     echo "    - Is your SSH key set up?"
+    echo ""
+    echo "  Edit: scripts/vastconfig.sh"
     exit 1
 fi
 echo ""
@@ -120,4 +125,3 @@ echo ""
 echo "  2. Run checkpoint sync on this machine:"
 echo "     ./scripts/sync_checkpoints.sh --watch --delete"
 echo ""
-

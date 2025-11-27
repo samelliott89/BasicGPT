@@ -1,3 +1,7 @@
+"""
+Device detection and management utilities.
+"""
+
 import torch
 
 
@@ -9,7 +13,6 @@ def get_best_device() -> torch.device:
     if torch.cuda.is_available():
         return torch.device("cuda")
 
-    # MPS is available on Apple Silicon builds of PyTorch
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return torch.device("mps")
 
@@ -30,5 +33,4 @@ def get_device_info(device: torch.device) -> str:
     if device.type == "mps":
         return "Apple Metal (MPS)"
     return "CPU"
-
 

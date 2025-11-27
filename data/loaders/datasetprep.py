@@ -6,6 +6,11 @@ import time
 from torch.utils.data import IterableDataset
 from datasets import load_dataset
 from datasets import IterableDataset as HfIterableDataset
+import sys
+from pathlib import Path
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 from config import DataConfig as data_config
 from enums import DatasetName, DatasetLang, DatasetSplit
 

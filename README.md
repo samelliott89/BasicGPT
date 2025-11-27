@@ -1,127 +1,145 @@
 # BasicGPT
 
-A from-scratch GPT implementation for learning. Built alongside Cursor.
-NOT a `build me a GPT, no mistakes` codebase, more of piece by piece
- `lets add a class called datasetprep to share and prepare each invidual dataset`.
-Supports single and multi-GPU training via Hugging Face Accelerate.
+A from-scratch GPT implementation for learning. Supports pretraining, supervised fine-tuning (SFT), and reinforcement learning (DPO).
+
+## Project Structure
+
+```
+BasicGPT/
+├── model/                    # GPT architecture
+│   ├── gpt.py               # Core GPT model class
+│   └── config.py            # Model configuration
+│
+├── data/                     # Data handling
+│   ├── tokenizer.py         # Tiktoken wrapper
+│   ├── datasets.py          # Dataset loading & preprocessing
+│   └── loaders/             # Individual dataset implementations
+│       ├── datasetprep.py   # Base class
+│       ├── finewebdataset.py
+│       ├── c4dataset.py
+│       └── synthdataset.py
+│
+├── training/                 # Training pipelines
+│   ├── pretrain/
+│   │   └── train.py         # Pretraining script
+│   ├── finetune/
+│   │   ├── config.py        # SFT configuration
+│   │   └── sft_trainer.py   # SFT trainer (uses GPT-2)
+│   └── rl/
+│       ├── config.py        # DPO/PPO configuration
+│       └── dpo_trainer.py   # DPO trainer
+│
+├── evals/                    # Evaluation & generation
+│   ├── evaluate.py          # Model evaluation
+│   └── generate.py          # Text generation
+│
+├── utils/                    # Utilities
+│   ├── device.py            # Device detection
+│   └── checkpoints.py       # Checkpoint handling
+│
+├── config.py                 # Shared configs (Training, Data, etc.)
+├── enums.py                  # Dataset enums
+├── learning_rate.py          # LR schedule
+├── gpt.py                    # Training functions (train_epoch, evaluate)
+│
+├── train.py                  # Entry point (backward compat)
+├── run_sft.py               # SFT entry point
+├── run_dpo.py               # DPO entry point
+│
+├── start.sh                  # Vast.ai launcher
+└── scripts/                  # Shell helpers
+```
+
+---
 
 ## Quick Start
 
 ```bash
 pip install -r requirements.txt
-python train.py                    # Single GPU
-accelerate launch train.py         # Multi-GPU
+```
+
+### 1. Pretraining
+```bash
+./start.sh                           # On Vast.ai
+accelerate launch train.py           # Local multi-GPU
+python train.py                       # Local single GPU
+```
+
+### 2. Supervised Fine-Tuning (GPT-2)
+```bash
+python run_sft.py                     # Fine-tune GPT-2 on Alpaca
+python run_sft.py --model gpt2-medium --epochs 3
+```
+
+### 3. DPO (After SFT)
+```bash
+python run_dpo.py --model ./checkpoints/sft/epoch_3
+```
+
+### 4. Evaluation & Generation
+```bash
+python -m evals.evaluate ./checkpoints/your-checkpoint/
+python -m evals.generate ./checkpoints/your-checkpoint/ --prompt "Hello"
 ```
 
 ---
 
-## Scripts
+## Training Stages
 
-### Training & Generation
-
-| Script | Usage |
-|--------|-------|
-| `train.py` | `accelerate launch train.py` |
-| `generate.py` | `python generate.py <checkpoint> --prompt "text"` |
-| `evals.py` | `python evals.py <checkpoint>` |
-| `prepare_data.py` | `python prepare_data.py` (test data loading) |
-
-### `generate.py` options
-```bash
---prompt "text"      # Required
---max_tokens 200     # Max tokens to generate
---temperature 0.8    # 0=greedy, 1=random
---top_k 50          # Top-k sampling
---top_p 0.9         # Nucleus sampling
-```
-
----
-
-## Vast.ai / Remote Training
-
-### Upload code to Vast.ai (from local)
-
-```bash
-# Replace <port> and <ip> with your Vast.ai instance details
-rsync -avz -e "ssh -p <port>" \
-    --exclude='__pycache__' \
-    --exclude='*.pyc' \
-    --exclude='checkpoints' \
-    --exclude='.git' \
-    --exclude='.venv' \
-    ./ root@<ip>:/root/BasicGPT/
-```
-
-### Setup & Train (on remote)
-
-```bash
-./start.sh              # Install deps + detect GPUs + train
-./start.sh --skip-deps  # Skip pip install
-./start.sh --dry-run    # Setup only, no training
-```
-
-### Checkpoint Sync (on local machine)
-
-```bash
-# First, edit scripts with your remote details:
-# REMOTE_HOST, REMOTE_PORT in both files
-
-# Test connectivity before training
-./scripts/test_remote_sync.sh
-
-# Sync checkpoints during training
-./scripts/sync_checkpoints.sh              # One-time
-./scripts/sync_checkpoints.sh --watch      # Every 60s
-./scripts/sync_checkpoints.sh --delete     # Delete after download
-./scripts/sync_checkpoints.sh --watch --delete  # Recommended
-```
-
----
-
-## Accelerate Commands
-
-```bash
-accelerate launch train.py                      # Auto-detect GPUs
-accelerate launch --num_processes=8 train.py    # Specific count
-accelerate config                               # First-time setup
-```
+| Stage | Script | Base Model | Data |
+|-------|--------|------------|------|
+| **Pretrain** | `start.sh` / `train.py` | Random init | FineWeb, C4 |
+| **SFT** | `run_sft.py` | GPT-2 | Alpaca instructions |
+| **DPO** | `run_dpo.py` | SFT model | HH-RLHF preferences |
 
 ---
 
 ## Configuration
 
-All in `config.py`:
-
+### Model (`model/config.py`)
 ```python
-# Datasets (DataConfig)
-current_datasets: [FINEWEB, C4]
-dataset_probabilities: [0.6, 0.4]  # Must match dataset count
-max_samples: 10000000
-
-# Model (GPTConfig)
-d_model: 256
-n_layers: 16
-n_heads: 8
-max_length: 1024
-
-# Training (TrainingConfig)  
-batch_size: 32
-gradient_accumulation_steps: 4
-epochs: 3
+GPTConfig(
+    d_model=256,
+    n_layers=16,
+    n_heads=8,
+    max_length=1024,
+)
 ```
 
-Effective batch = `batch_size × grad_accum × num_gpus`
+### Pretraining (`config.py`)
+```python
+DataConfig(
+    current_datasets=[FINEWEB, C4],
+    dataset_probabilities=[0.6, 0.4],
+)
+
+TrainingConfig(
+    batch_size=32,
+    gradient_accumulation_steps=4,
+    epochs=3,
+)
+```
+
+### SFT/DPO (in `training/*/config.py`)
+```python
+SFTConfig(model_name="gpt2", dataset_name="tatsu-lab/alpaca")
+DPOConfig(model_name="path/to/sft", beta=0.1)
+```
 
 ---
 
-## Helper Scripts
+## Vast.ai Deployment
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/calc_params.py` | Model parameter calculator |
-| `scripts/calc_lr_config.py` | LR schedule calculator |
-| `scripts/sync_checkpoints.sh` | Download checkpoints from remote |
-| `scripts/test_remote_sync.sh` | Test remote connectivity |
+```bash
+# Upload code
+./scripts/upload.sh
+
+# On remote
+./start.sh
+
+# Sync checkpoints (locally)
+./scripts/sync_checkpoints.sh --watch
+```
 
 ---
 

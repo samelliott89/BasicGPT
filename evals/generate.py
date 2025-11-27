@@ -7,9 +7,10 @@ This script loads a saved checkpoint and uses it to generate text.
 import torch
 import argparse
 from pathlib import Path
-from tokenizer import Tokenizer
-from gpt import GPT
-from config import GPTConfig, GenerationConfig
+from data.tokenizer import Tokenizer
+from model.gpt import GPT
+from model.config import GPTConfig
+from config import GenerationConfig
 
 
 

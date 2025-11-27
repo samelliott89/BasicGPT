@@ -1,5 +1,14 @@
-tiktoken
+# Core
 torch
+tiktoken
+
+# Data
 datasets
+
+# Training
 accelerate
 wandb
+
+# Fine-tuning & RL (for GPT-2 models)
+transformers
+tqdm

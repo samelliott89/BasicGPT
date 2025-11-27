@@ -1,6 +1,7 @@
 import torch
 from typing import Optional
-from dataset_loaders.datasetprep import DatasetPrep, DatasetLang
+
+from data.loaders.datasetprep import DatasetPrep, DatasetLang
 from config import DataConfig
 
 # Custom config overrides (optional)

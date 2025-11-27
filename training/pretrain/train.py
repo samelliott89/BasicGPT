@@ -25,7 +25,7 @@ from accelerate.utils import set_seed
 
 from data.tokenizer import Tokenizer
 from model.gpt import GPT
-from gpt import train_epoch, evaluate  # Training functions in root gpt.py
+from gpt import train_epoch, evaluate  # Training functions still in root gpt.py
 from data.datasets import load_datasets, create_data_loaders
 from config import GPTConfig, TrainingConfig, DataConfig
 from learning_rate import get_lr

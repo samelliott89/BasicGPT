@@ -9,13 +9,13 @@ import torch
 from torch.utils.data import Dataset, DataLoader, IterableDataset
 from datasets import load_dataset
 from datasets.iterable_dataset import IterableDataset as HfIterableDataset
-from tokenizer import Tokenizer
+from data.tokenizer import Tokenizer
 from typing import Optional
 import time
 import os
 import random
 from config import GPTConfig, DataConfig, TrainingConfig
-from dataset_loaders.datasetprep import DatasetName, DatasetSplit
+from data.loaders.datasetprep import DatasetName, DatasetSplit
 
 gpt_config = GPTConfig()
 data_config = DataConfig()
@@ -113,9 +113,9 @@ def get_dataset_class(dataset_name: DatasetName):
         The dataset class for the given dataset name
     """
     # Import dataset classes here to avoid circular imports
-    from dataset_loaders.synthdataset import SYNTHIterableDataset
-    from dataset_loaders.finewebdataset import FineWebDataset
-    from dataset_loaders.c4dataset import C4Dataset
+    from data.loaders.synthdataset import SYNTHIterableDataset
+    from data.loaders.finewebdataset import FineWebDataset
+    from data.loaders.c4dataset import C4Dataset
     
     mapping = {
         DatasetName.SYNTHETIC: SYNTHIterableDataset,
@@ -352,7 +352,7 @@ def load_training_data(
         val_split_percentage = 0.1  # Default to 10% validation
     
     # Load the raw dataset
-    from dataset_loaders.datasetprep import DatasetPrep
+    from data.loaders.datasetprep import DatasetPrep
     
     # For training data, we always use use_val_split=False
     # - If requires_validation_split=False: loads full "train" split (dataset has separate validation)
@@ -445,7 +445,7 @@ def load_validation_data(
         val_split_percentage = 0.1  # Default to 10% validation
     
     # Load the raw dataset
-    from dataset_loaders.datasetprep import DatasetPrep
+    from data.loaders.datasetprep import DatasetPrep
     
     # Determine split and use_val_split based on whether dataset has native validation
     if requires_validation_split:

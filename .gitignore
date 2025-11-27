@@ -4,8 +4,18 @@ logs/
 results/
 wandb/
 .vscode/
+
+# Environment files
+.env
+.env.local
+
+# Python
 *.pyc
 *.pyo
 *.pyd
 *.pyw
 *.pyz
+
+# Virtual environments
+.venv/
+venv/

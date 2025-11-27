@@ -15,10 +15,11 @@ from pathlib import Path
 from typing import List, Dict
 import math
 
-from tokenizer import Tokenizer
-from gpt import GPT
-from config import GPTConfig, EvaluationConfig, GenerationConfig
-from prepare_data import load_validation_data, create_data_loaders
+from data.tokenizer import Tokenizer
+from model.gpt import GPT
+from model.config import GPTConfig
+from config import EvaluationConfig, GenerationConfig
+from data.datasets import load_validation_data, create_data_loaders
 
 
 
