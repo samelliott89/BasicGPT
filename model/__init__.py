@@ -1,23 +1,23 @@
 """
 BasicGPT Model Module
 
-Contains:
-- GPT: Core GPT architecture
-- GPTConfig: Model configuration
-- load_model: Unified loader for any model type
-- BaseLanguageModel, BaseTokenizer: Abstract interfaces
+Usage:
+    from model import load_model, ModelType
+
+    # Load HuggingFace model
+    model, tokenizer = load_model("gpt2", ModelType.HUGGINGFACE)
+
+    # Load your trained model
+    model, tokenizer = load_model("./checkpoints/best", ModelType.BASICGPT)
+
+    # Auto-detect
+    model, tokenizer = load_model("gpt2")
 """
 
-from model.base import BaseLanguageModel, BaseTokenizer, ModelOutput
 from model.config import GPTConfig
 from model.gpt import GPT
-from model.loader import load_model, load_tokenizer
-from model.wrappers import (
-    BasicGPTModel,
-    BasicGPTTokenizer,
-    HuggingFaceModel,
-    HuggingFaceTokenizer,
-)
+from model.loader import LanguageModel, ModelType, Tokenizer, load_model
+from model.types import ModelOutput
 
 __all__ = [
     # Core
@@ -25,14 +25,9 @@ __all__ = [
     "GPTConfig",
     # Unified loader
     "load_model",
-    "load_tokenizer",
-    # Base classes
-    "BaseLanguageModel",
-    "BaseTokenizer",
+    "ModelType",
+    "LanguageModel",
+    "Tokenizer",
+    # Output type
     "ModelOutput",
-    # Wrappers
-    "HuggingFaceModel",
-    "HuggingFaceTokenizer",
-    "BasicGPTModel",
-    "BasicGPTTokenizer",
 ]

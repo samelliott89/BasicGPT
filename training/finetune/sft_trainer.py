@@ -13,7 +13,7 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from model import BaseTokenizer, load_model
+from model import Tokenizer, load_model
 from training.finetune.config import InstructionTemplate, SFTConfig
 from utils.device import get_best_device
 
@@ -28,7 +28,7 @@ class InstructionDataset(Dataset):
     def __init__(
         self,
         dataset_name: str,
-        tokenizer: BaseTokenizer,
+        tokenizer: Tokenizer,
         config: SFTConfig,
         split: str = "train",
     ):
@@ -71,18 +71,9 @@ class InstructionDataset(Dataset):
         input_ids = encoding["input_ids"].squeeze(0)
         attention_mask = encoding["attention_mask"].squeeze(0)
 
-        # Create labels (same as input_ids for causal LM)
+        # Labels = input_ids (HuggingFace shifts internally)
+        # Only mask padding, don't mask prompt (simpler, works better)
         labels = input_ids.clone()
-
-        # Find where response starts and mask the prompt
-        prompt_only = self.template.format_prompt(instruction, input_text)
-        prompt_encoding = self.tokenizer(prompt_only, return_tensors="pt")
-        prompt_len = prompt_encoding["input_ids"].shape[1]
-
-        # Mask prompt portion (set to -100 to ignore in loss)
-        labels[:prompt_len] = -100
-
-        # Also mask padding
         labels[attention_mask == 0] = -100
 
         return {
@@ -233,14 +224,20 @@ class SFTTrainer:
                             attention_mask=attention_mask,
                             labels=labels,
                         )
-                        loss = output.loss / self.config.gradient_accumulation_steps
+                        loss = output.loss
                 else:
                     output = self.model.forward(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         labels=labels,
                     )
-                    loss = output.loss / self.config.gradient_accumulation_steps
+                    loss = output.loss
+
+                # Skip batch if loss is None or NaN
+                if loss is None or torch.isnan(loss):
+                    continue
+
+                loss = loss / self.config.gradient_accumulation_steps
 
                 # Backward pass
                 if scaler:

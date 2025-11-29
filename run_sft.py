@@ -1,100 +1,84 @@
 #!/usr/bin/env python3
 """
-Run Supervised Fine-Tuning (SFT) on GPT-2.
-
-This script fine-tunes GPT-2 to follow instructions using the Alpaca dataset.
+Run Supervised Fine-Tuning with GPT-2.
 
 Usage:
-    python run_sft.py                    # Run with defaults
-    python run_sft.py --epochs 3         # Custom epochs
-    python run_sft.py --model gpt2-medium  # Larger model
+    python run_sft.py                           # Use defaults (GPT-2, Alpaca)
+    python run_sft.py --model gpt2-medium       # Larger model
+    python run_sft.py --max-samples 1000        # Quick test run
 """
 
 import argparse
+import os
 
-from training.finetune import SFTConfig, SFTTrainer
+# Suppress HuggingFace warnings
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+from training.finetune.config import SFTConfig  # noqa: E402
+from training.finetune.sft_trainer import SFTTrainer  # noqa: E402
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Supervised Fine-Tuning")
-
-    # Model args
-    parser.add_argument(
-        "--model",
-        type=str,
-        default="gpt2",
-        help="HuggingFace model name (gpt2, gpt2-medium, gpt2-large)",
-    )
-
-    # Dataset args
-    parser.add_argument(
-        "--dataset", type=str, default="tatsu-lab/alpaca", help="HuggingFace dataset name"
-    )
-    parser.add_argument(
-        "--max-samples", type=int, default=None, help="Max samples to use (None = all)"
-    )
-
-    # Training args
-    parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--batch-size", type=int, default=4)
-    parser.add_argument("--lr", type=float, default=2e-5)
-    parser.add_argument("--max-length", type=int, default=512)
-    parser.add_argument("--grad-accum", type=int, default=4, help="Gradient accumulation steps")
-
-    # Output args
-    parser.add_argument("--output-dir", type=str, default="./checkpoints/sft")
-
+    parser = argparse.ArgumentParser(description="Run SFT with GPT-2")
+    parser.add_argument("--model", default="gpt2", help="HuggingFace model name")
+    parser.add_argument("--dataset", default="tatsu-lab/alpaca", help="Dataset name")
+    parser.add_argument("--max-samples", type=int, default=None, help="Limit samples (for testing)")
+    parser.add_argument("--epochs", type=int, default=3, help="Number of epochs")
+    parser.add_argument("--batch-size", type=int, default=4, help="Batch size")
+    parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate")
+    parser.add_argument("--max-length", type=int, default=512, help="Max sequence length")
+    parser.add_argument("--output-dir", default="./checkpoints/sft", help="Output directory")
+    parser.add_argument("--fp16", action="store_true", help="Use FP16 mixed precision")
     args = parser.parse_args()
 
     # Create config
     config = SFTConfig(
         model_name=args.model,
+        model_type="huggingface",
         dataset_name=args.dataset,
         max_samples=args.max_samples,
         num_epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.lr,
         max_length=args.max_length,
-        gradient_accumulation_steps=args.grad_accum,
         output_dir=args.output_dir,
+        use_fp16=args.fp16,
     )
 
-    # Print config
     print("\n" + "=" * 60)
-    print("Supervised Fine-Tuning Configuration")
+    print("SFT Configuration")
     print("=" * 60)
-    print(f"Model: {config.model_name}")
-    print(f"Dataset: {config.dataset_name}")
-    print(f"Max samples: {config.max_samples or 'all'}")
-    print(f"Epochs: {config.num_epochs}")
-    print(f"Batch size: {config.batch_size}")
-    print(f"Gradient accumulation: {config.gradient_accumulation_steps}")
-    print(f"Effective batch size: {config.batch_size * config.gradient_accumulation_steps}")
-    print(f"Learning rate: {config.learning_rate}")
-    print(f"Max length: {config.max_length}")
-    print(f"Output dir: {config.output_dir}")
+    print(f"  Model: {config.model_name}")
+    print(f"  Dataset: {config.dataset_name}")
+    print(f"  Max samples: {config.max_samples or 'all'}")
+    print(f"  Epochs: {config.num_epochs}")
+    print(f"  Batch size: {config.batch_size}")
+    print(f"  Learning rate: {config.learning_rate}")
+    print(f"  Max length: {config.max_length}")
+    print(f"  Output: {config.output_dir}")
+    print(f"  FP16: {config.use_fp16}")
     print()
 
-    # Create trainer and train
+    # Create trainer and run
     trainer = SFTTrainer(config)
     trainer.train()
 
     # Test generation
     print("\n" + "=" * 60)
-    print("Testing generation after training")
+    print("Testing generation...")
     print("=" * 60)
 
-    prompts = [
-        "Explain machine learning in simple terms.",
-        "Write a short poem about the ocean.",
-        "What are three tips for being productive?",
+    test_prompts = [
+        "Write a short poem about coding",
+        "Explain what machine learning is in simple terms",
+        "Give me 3 tips for learning Python",
     ]
 
-    for prompt in prompts:
-        print(f"\nPrompt: {prompt}")
+    for prompt in test_prompts:
+        print(f"\n📝 Prompt: {prompt}")
         response = trainer.generate(prompt, max_new_tokens=100)
-        print(f"Response: {response}")
-        print("-" * 40)
+        print(f"🤖 Response: {response}")
 
 
 if __name__ == "__main__":
