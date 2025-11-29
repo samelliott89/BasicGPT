@@ -4,7 +4,7 @@ logs/
 results/
 wandb/
 .vscode/
-.cursor/
+.cursor/*
 
 # Environment files
 .env
