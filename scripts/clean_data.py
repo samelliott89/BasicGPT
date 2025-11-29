@@ -6,7 +6,7 @@
 # def has_contamination(doc, min_ngram=13):
 #     """Check if doc contains long n-grams from benchmarks"""
 #     doc_ngrams = set(get_ngrams(doc, min_ngram))
-    
+
 #     for bench_text in benchmark_texts:
 #         bench_ngrams = set(get_ngrams(bench_text, min_ngram))
 #         if doc_ngrams & bench_ngrams:  # Any overlap

@@ -7,8 +7,7 @@ Supports both:
 - BasicGPT custom models
 """
 
-from training.finetune.sft_trainer import SFTTrainer
 from training.finetune.config import SFTConfig
+from training.finetune.sft_trainer import SFTTrainer
 
 __all__ = ["SFTTrainer", "SFTConfig"]
-

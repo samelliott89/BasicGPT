@@ -42,7 +42,6 @@ BasicGPT/
 ├── learning_rate.py          # LR schedule
 ├── gpt.py                    # Training functions (train_epoch, evaluate)
 │
-├── train.py                  # Entry point (backward compat)
 ├── run_sft.py               # SFT entry point
 ├── run_dpo.py               # DPO entry point
 │
@@ -60,9 +59,9 @@ pip install -r requirements.txt
 
 ### 1. Pretraining
 ```bash
-./start.sh                           # On Vast.ai
-accelerate launch train.py           # Local multi-GPU
-python train.py                       # Local single GPU
+./start.sh                                        # On Vast.ai
+accelerate launch -m training.pretrain.train      # Local multi-GPU
+python -m training.pretrain.train                 # Local single GPU
 ```
 
 ### 2. Supervised Fine-Tuning (GPT-2)

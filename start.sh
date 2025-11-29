@@ -313,9 +313,9 @@ if [ "$DRY_RUN" = true ]; then
     echo ""
     echo "To start training manually:"
     if [ "$GPU_COUNT" -gt 1 ]; then
-        echo "  accelerate launch --num_processes=$GPU_COUNT train.py"
+        echo "  accelerate launch --num_processes=$GPU_COUNT -m training.pretrain.train"
     else
-        echo "  accelerate launch train.py"
+        echo "  accelerate launch -m training.pretrain.train"
     fi
 else
     run_training

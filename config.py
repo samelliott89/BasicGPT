@@ -6,18 +6,20 @@ of the GPT training pipeline.
 """
 
 from dataclasses import dataclass, field
-from typing import Callable, Optional
-from learning_rate import LearningRateConfig
+
 from enums import DatasetName
+from learning_rate import LearningRateConfig
+
 
 @dataclass
 class GPTConfig:
     """
     Configuration class for the GPT model architecture.
-    
+
     This holds all the hyperparameters (settings) for the model structure.
     Using a dataclass makes it easy to pass around configuration.
     """
+
     vocab_size: int = 100277  # Vocabulary size from tiktoken cl100k_base
     d_model: int = 256  # Dimension of the model (embedding size)
     n_heads: int = 8  # Number of attention heads
@@ -30,24 +32,27 @@ class GPTConfig:
 class DataConfig:
     """
     Configuration class for data loading and preprocessing.
-    
+
     Controls how data is loaded from the dataset and prepared for training.
     """
+
     # Dataset selection
     # Use multiple datasets with probabilistic sampling for diverse pre-training
     # Note: SYNTH is for post-training/fine-tuning, not pre-training
-    current_datasets: list[DatasetName] = field(default_factory=lambda: [
-        DatasetName.FINEWEB,    # Web text - high quality, curated
-        DatasetName.C4,         # Common Crawl - large scale, diverse
-    ])
+    current_datasets: list[DatasetName] = field(
+        default_factory=lambda: [
+            DatasetName.FINEWEB,  # Web text - high quality, curated
+            DatasetName.C4,  # Common Crawl - large scale, diverse
+        ]
+    )
     # Sampling probabilities for each dataset (must match length of current_datasets)
     # 60% FineWeb (higher quality), 40% C4 (more diversity)
-    dataset_probabilities: Optional[list[float]] = field(default_factory=lambda: [0.6, 0.4])
-    
+    dataset_probabilities: list[float] | None = field(default_factory=lambda: [0.6, 0.4])
+
     # Data loading parameters
     # Chinchilla scaling: ~20 tokens per parameter, so 47M params → ~1B tokens → ~2M samples
     # With larger models or more compute, increase this
-    max_samples: Optional[int] = 10000000  # 10M samples for pre-training
+    max_samples: int | None = 10000000  # 10M samples for pre-training
     max_length: int = 1024  # Maximum sequence length for tokenization
     text_field: str = "text"  # Which field to use from dataset (FineWeb and C4 use "text")
     batch_size: int = 32  # Same as training config
@@ -62,12 +67,13 @@ class DataConfig:
 class TrainingConfig:
     """
     Configuration class for model training.
-    
+
     Controls training hyperparameters and optimization settings.
     """
+
     # Model architecture (can override GPTConfig defaults)
     gpt_config: GPTConfig = field(default_factory=GPTConfig)
-    
+
     # Training hyperparameters
     batch_size: int = 32  # Batch size for training (optimized for 92GB VRAM with max_length=1024)
     lr_config: LearningRateConfig = field(default_factory=LearningRateConfig)
@@ -78,14 +84,18 @@ class TrainingConfig:
     eps: float = 1e-8  # Adam epsilon parameter
     max_grad_norm: float = 1.0  # Gradient clipping max norm
     gradient_accumulation_steps: int = 4  # Number of steps to accumulate gradients (1 = no accumulation, effective_batch_size = batch_size * gradient_accumulation_steps = 32 * 4 = 128)
-    
+
     # Data configuration
     data_config: DataConfig = field(default_factory=DataConfig)
-    
+
     # Training settings
     save_dir: str = "./checkpoints"  # Directory to save model checkpoints
-    save_every_n_batches: Optional[int] = None  # Save checkpoint every N batches (None = only at end of epoch)
-    print_every_n_batches: int = 50  # Print progress every N batches (DEPRECATED in favor of log_every_n_steps)
+    save_every_n_batches: int | None = (
+        None  # Save checkpoint every N batches (None = only at end of epoch)
+    )
+    print_every_n_batches: int = (
+        50  # Print progress every N batches (DEPRECATED in favor of log_every_n_steps)
+    )
     log_every_n_steps: int = 100  # Log training loss every N optimizer steps
     val_check_interval: int = 1000  # Run validation every N optimizer steps
     use_mixed_precision: bool = True  # Use FP16/BF16 mixed precision training
@@ -97,52 +107,63 @@ class TrainingConfig:
 class GenerationConfig:
     """
     Configuration class for text generation.
-    
+
     Controls sampling strategies and generation parameters.
     """
+
     max_new_tokens: int = 200  # Maximum number of new tokens to generate
-    temperature: float = 0.8  # Temperature for sampling (lower = more focused, higher = more random)
+    temperature: float = (
+        0.8  # Temperature for sampling (lower = more focused, higher = more random)
+    )
     top_k: int = 50  # Top-k sampling: only consider top k tokens (0 = disabled)
-    top_p: float = 0.9  # Top-p (nucleus) sampling: cumulative probability threshold (0.0 = disabled)
-    repetition_penalty: float = 1.2  # Penalty for repeating tokens (>1.0 reduces repetition, higher = less repetition)
+    top_p: float = (
+        0.9  # Top-p (nucleus) sampling: cumulative probability threshold (0.0 = disabled)
+    )
+    repetition_penalty: float = (
+        1.2  # Penalty for repeating tokens (>1.0 reduces repetition, higher = less repetition)
+    )
 
 
 @dataclass
 class EvaluationConfig:
     """
     Configuration class for model evaluation.
-    
+
     Controls evaluation metrics and test settings.
     Uses GenerationConfig for generation parameters to ensure consistency.
     """
+
     # Evaluation data settings
     eval_samples: int = 1000  # Number of samples to use for evaluation
     batch_size: int = 8  # Batch size for evaluation
     max_length: int = 1024  # Maximum sequence length for evaluation
-    
+
     # Generation config for quality tests (shared with generation script)
     generation_config: GenerationConfig = field(default_factory=GenerationConfig)
-    
+
     # Accuracy evaluation settings
     top_k_accuracy: int = 5  # Calculate top-k accuracy (for accuracy metrics, not generation)
-    
+
     # Test prompts for generation quality evaluation
-    test_prompts: list[str] = field(default_factory=lambda: [
-        "The meaning of life is",
-        "In the future, artificial intelligence will",
-        "Once upon a time, there was",
-        "The key to success is",
-        "Science has shown that"
-    ])
+    test_prompts: list[str] = field(
+        default_factory=lambda: [
+            "The meaning of life is",
+            "In the future, artificial intelligence will",
+            "Once upon a time, there was",
+            "The key to success is",
+            "Science has shown that",
+        ]
+    )
 
 
 @dataclass
 class OptimizerConfig:
     """
     Configuration class for optimizer settings.
-    
+
     Can be used to customize optimizer behavior.
     """
+
     learning_rate: float = 3e-4
     weight_decay: float = 0.01
     beta1: float = 0.9
@@ -155,5 +176,6 @@ class TokenizerConfig:
     """
     Configuration class for tokenizer settings.
     """
+
     encoding_name: str = "cl100k_base"  # Tiktoken encoding name
     # vocab_size is determined by the encoding, not set here

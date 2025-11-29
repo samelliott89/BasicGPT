@@ -6,4 +6,3 @@ Contains training pipelines for:
 - finetune: Supervised fine-tuning (SFT) on instruction data
 - rl: Reinforcement learning (RLHF, DPO)
 """
-

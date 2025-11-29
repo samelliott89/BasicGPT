@@ -1,47 +1,50 @@
-from abc import ABC, abstractmethod
-from typing import Optional
-import torch
 import os
-import time
-from torch.utils.data import IterableDataset
-from datasets import load_dataset
-from datasets import IterableDataset as HfIterableDataset
 import sys
+import time
+from abc import ABC, abstractmethod
 from pathlib import Path
+
+import torch
+from datasets import IterableDataset as HfIterableDataset
+from datasets import load_dataset
+from torch.utils.data import IterableDataset
+
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from config import DataConfig as data_config
-from enums import DatasetName, DatasetLang, DatasetSplit
+from enums import DatasetName, DatasetSplit
+
 
 class DatasetPrep(IterableDataset, ABC):
     """
     Abstract base class for dataset preparation.
-    
+
     Provides common functionality for:
     - Tokenization (_tokenize_sample)
     - Iteration (__iter__)
     - Dataset loading (load_dataset class method)
-    
+
     Subclasses must implement:
     - _pre_process_sample: Extract and format text from a sample dict
     """
+
     def __init__(
         self,
         dataset,
         tokenizer,
-        max_length: Optional[int] = None,
-        batch_size: Optional[int] = None,
-        streaming: Optional[bool] = None,
-        timeout: Optional[int] = None,
-        num_retries: Optional[int] = None,
-        num_workers: Optional[int] = None,
-        num_dataset_workers: Optional[int] = None,
-        **kwargs  # Allow subclasses to pass additional parameters
-    ):   
+        max_length: int | None = None,
+        batch_size: int | None = None,
+        streaming: bool | None = None,
+        timeout: int | None = None,
+        num_retries: int | None = None,
+        num_workers: int | None = None,
+        num_dataset_workers: int | None = None,
+        **kwargs,  # Allow subclasses to pass additional parameters
+    ):
         """
         Initialize the dataset.
-        
+
         Args:
             dataset: The HuggingFace dataset (streaming or regular)
             tokenizer: Tokenizer instance for encoding text
@@ -56,7 +59,7 @@ class DatasetPrep(IterableDataset, ABC):
         """
         self.dataset = dataset
         self.tokenizer = tokenizer
-        
+
         # Use provided values or fall back to data_config defaults
         self.max_length = max_length if max_length is not None else data_config.max_length
         self.batch_size = batch_size if batch_size is not None else data_config.batch_size
@@ -64,41 +67,45 @@ class DatasetPrep(IterableDataset, ABC):
         self.timeout = timeout if timeout is not None else data_config.timeout
         self.num_retries = num_retries if num_retries is not None else data_config.num_retries
         self.num_workers = num_workers if num_workers is not None else data_config.num_workers
-        self.num_dataset_workers = num_dataset_workers if num_dataset_workers is not None else data_config.num_dataset_workers
-        
+        self.num_dataset_workers = (
+            num_dataset_workers
+            if num_dataset_workers is not None
+            else data_config.num_dataset_workers
+        )
+
         # Store any additional kwargs for subclass use
         for key, value in kwargs.items():
             setattr(self, key, value)
 
     @abstractmethod
-    def _pre_process_sample(self, sample: dict) -> Optional[str]:
+    def _pre_process_sample(self, sample: dict) -> str | None:
         """
         Extract and preprocess text from a dataset sample.
-        
+
         This method must be implemented by subclasses to handle dataset-specific
         text extraction logic (e.g., combining fields, filtering by language, etc.)
-        
+
         Args:
             sample: A dictionary containing the dataset sample
-            
+
         Returns:
             The preprocessed text string, or None if the sample should be skipped
         """
         pass
 
-    def _tokenize_sample(self, text: str) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
+    def _tokenize_sample(self, text: str) -> tuple[torch.Tensor, torch.Tensor] | None:
         """
         Tokenize text and create input/target sequences.
-        
+
         This is common across all datasets and handles:
         - Encoding text to tokens
         - Truncation/padding to max_length
         - Clamping token IDs to valid vocabulary range
         - Creating shifted input/target pairs
-        
+
         Args:
             text: The preprocessed text string
-            
+
         Returns:
             Tuple of (input_ids, target_ids) tensors, or None if tokenization fails
         """
@@ -111,7 +118,7 @@ class DatasetPrep(IterableDataset, ABC):
 
         # Truncate or pad to max_length
         if len(tokens) > self.max_length:
-            tokens = tokens[:self.max_length]
+            tokens = tokens[: self.max_length]
         else:
             tokens = tokens + [0] * (self.max_length - len(tokens))
 
@@ -128,30 +135,30 @@ class DatasetPrep(IterableDataset, ABC):
         target_ids = token_tensor[1:]
 
         return input_ids, target_ids
-    
-    def _process_sample(self, sample: dict) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
+
+    def _process_sample(self, sample: dict) -> tuple[torch.Tensor, torch.Tensor] | None:
         """
         Process a single sample: preprocess text, tokenize, and format.
-        
+
         This combines the dataset-specific preprocessing with common tokenization.
-        
+
         Returns:
             A tuple of (input_ids, target_ids) or None if sample is invalid
         """
         # Call subclass-specific preprocessing
         text = self._pre_process_sample(sample)
-        
+
         # Skip if preprocessing returned None or empty text
         if not text or len(text.strip()) == 0:
             return None
-        
+
         # Apply common tokenization
         return self._tokenize_sample(text)
-    
+
     def __iter__(self):
         """
         Iterate over the dataset, yielding processed samples.
-        
+
         This is called by PyTorch's DataLoader for IterableDataset.
         """
         for sample in self.dataset:
@@ -162,22 +169,22 @@ class DatasetPrep(IterableDataset, ABC):
     @staticmethod
     def load_dataset(
         dataset_name: DatasetName,
-        data_subset_name: Optional[str],
+        data_subset_name: str | None,
         split: DatasetSplit = DatasetSplit.TRAIN,
         streaming: bool = True,
         num_retries: int = data_config.num_retries,
         timeout: int = data_config.timeout,
         max_samples: int = data_config.max_samples,
         use_val_split: bool = False,
-        val_split_percentage: Optional[float] = 0.0,
+        val_split_percentage: float | None = 0.0,
     ):
         """
         Load a dataset from HuggingFace with retry logic and train/val splitting.
-        
+
         Uses defaults from DataConfig unless explicitly overridden.
-        
+
         This function includes retry logic to handle network timeouts and connection issues.
-        
+
         Args:
             dataset_name: Name/path of the HuggingFace dataset (e.g., "PleIAs/SYNTH")
             data_subset_name: Optional dataset configuration name (e.g., "sample-10BT", "en", "default")
@@ -189,10 +196,10 @@ class DatasetPrep(IterableDataset, ABC):
             use_val_split: If True, return the validation portion (last val_split_percentage)
                           If False, return the train portion (first 1-val_split_percentage)
             val_split_percentage: Percentage of data to use for validation (0.0 to 1.0)
-            
+
         Returns:
             The loaded HuggingFace dataset (streaming or regular)
-            
+
         Raises:
             FileNotFoundError: If dataset cannot be loaded after retries
         """
@@ -205,36 +212,38 @@ class DatasetPrep(IterableDataset, ABC):
             timeout = data_config.timeout
         if max_samples is None:
             max_samples = data_config.max_samples
-        
+
         print(f"Loading {dataset_name} dataset from Hugging Face...")
         if data_subset_name:
             print(f"  Configuration: {data_subset_name}")
         print(f"  Split: {split}")
         if use_val_split:
-            print(f"  Using VALIDATION portion (last {val_split_percentage*100:.0f}% of data)")
+            print(f"  Using VALIDATION portion (last {val_split_percentage * 100:.0f}% of data)")
         else:
-            print(f"  Using TRAINING portion (first {(1-val_split_percentage)*100:.0f}% of data)")
+            print(
+                f"  Using TRAINING portion (first {(1 - val_split_percentage) * 100:.0f}% of data)"
+            )
         print(f"  Streaming: {streaming} (recommended for large datasets)")
         print(f"  Max samples: {max_samples if max_samples else 'all'}")
         print(f"  Timeout: {timeout} seconds")
         print()
-        
+
         # Set environment variable for longer timeout
         os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = str(timeout)
-        
+
         # Retry logic with exponential backoff
         last_error = None
         for attempt in range(num_retries):
             try:
                 if attempt > 0:
-                    wait_time = 2 ** attempt  # Exponential backoff: 2, 4, 8 seconds
+                    wait_time = 2**attempt  # Exponential backoff: 2, 4, 8 seconds
                     print(f"Retry attempt {attempt + 1}/{num_retries} after {wait_time} seconds...")
                     time.sleep(wait_time)
-                
+
                 # Load the dataset from Hugging Face
                 # Default to streaming=True as it doesn't require downloading everything upfront
                 print("Connecting to Hugging Face Hub...")
-                
+
                 # Build load_dataset arguments
                 # Convert enum to string value for HuggingFace API
                 split_str = split.value if isinstance(split, DatasetSplit) else split
@@ -243,27 +252,27 @@ class DatasetPrep(IterableDataset, ABC):
                     "split": split_str,
                     "streaming": streaming,
                 }
-                
+
                 # Add name parameter if specified
                 if data_subset_name is not None:
                     load_args["name"] = data_subset_name
-                
+
                 # Add download_config for non-streaming datasets
                 if not streaming:
                     load_args["download_config"] = {
                         "timeout": timeout,
                         "num_proc": 1,  # Reduce parallel downloads to avoid timeouts
                     }
-                
+
                 dataset = load_dataset(**load_args)
-                
+
                 print("✓ Successfully connected to dataset")
                 break
-                
+
             except (FileNotFoundError, ConnectionError, TimeoutError) as e:
                 last_error = e
                 error_msg = str(e)
-                
+
                 if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
                     print(f"✗ Connection timeout (attempt {attempt + 1}/{num_retries})")
                     if attempt < num_retries - 1:
@@ -274,16 +283,20 @@ class DatasetPrep(IterableDataset, ABC):
                         print("  - Dataset being very large")
                         print()
                         if not streaming:
-                            print("  💡 Tip: Try using --streaming flag to avoid downloading the entire dataset")
+                            print(
+                                "  💡 Tip: Try using --streaming flag to avoid downloading the entire dataset"
+                            )
                             print()
                 elif "connection" in error_msg.lower():
                     print(f"✗ Connection error (attempt {attempt + 1}/{num_retries})")
                     print("  Please check your internet connection")
                     print()
                 else:
-                    print(f"✗ Error loading dataset (attempt {attempt + 1}/{num_retries}): {error_msg}")
+                    print(
+                        f"✗ Error loading dataset (attempt {attempt + 1}/{num_retries}): {error_msg}"
+                    )
                     print()
-                
+
                 if attempt == num_retries - 1:
                     # Last attempt failed
                     print("=" * 60)
@@ -294,13 +307,15 @@ class DatasetPrep(IterableDataset, ABC):
                     print("2. Try using --streaming flag (recommended for large datasets)")
                     print("3. Increase timeout with: export HF_HUB_DOWNLOAD_TIMEOUT=600")
                     print("4. Try again later (Hugging Face Hub might be temporarily unavailable)")
-                    print("5. Check if you can access https://huggingface.co/datasets/{dataset_name}")
+                    print(
+                        "5. Check if you can access https://huggingface.co/datasets/{dataset_name}"
+                    )
                     print("=" * 60)
                     raise FileNotFoundError(
                         f"Could not load {dataset_name} dataset after {num_retries} attempts. "
                         f"Last error: {error_msg}"
                     ) from last_error
-        
+
         # Split the dataset into train/validation portions
         # For streaming datasets, we need to use skip() and take()
         if max_samples:
@@ -320,7 +335,9 @@ class DatasetPrep(IterableDataset, ABC):
                 # We'll need to rely on the caller to specify max_samples
                 # For now, print a warning
                 if use_val_split:
-                    print("⚠️  WARNING: Cannot create validation split from streaming dataset without max_samples")
+                    print(
+                        "⚠️  WARNING: Cannot create validation split from streaming dataset without max_samples"
+                    )
                     print("   Please specify max_samples to enable train/val splitting")
             else:
                 # For non-streaming, we can use the full dataset and split it
@@ -334,7 +351,6 @@ class DatasetPrep(IterableDataset, ABC):
                     train_samples = int(total_samples * (1 - val_split_percentage))
                     dataset = dataset.select(range(train_samples))
 
-
         # Shuffle the dataset if it's for training (only if streaming/iterable)
         # For streaming datasets, we can use buffer-based shuffling
         # This shuffles within a buffer window, providing good randomization
@@ -346,5 +362,5 @@ class DatasetPrep(IterableDataset, ABC):
                 # Larger buffer = better shuffle quality but more memory usage
                 dataset = dataset.shuffle(buffer_size=10000, seed=42)
                 print("  Applied buffer-based shuffling (buffer_size=10000)")
-        
-        return dataset  
+
+        return dataset

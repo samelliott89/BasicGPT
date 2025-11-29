@@ -1,12 +1,4 @@
 [tool.ruff]
-# Enable pycodestyle (`E`) and Pyflakes (`F`) codes by default.
-select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "T20"]
-ignore = []
-
-# Allow autofix for all enabled rules (when `--fix`) is provided.
-fixable = ["ALL"]
-unfixable = []
-
 # Exclude a variety of commonly ignored directories.
 exclude = [
     ".bzr",
@@ -30,6 +22,7 @@ exclude = [
     "dist",
     "node_modules",
     "venv",
+    "checkpoints",
 ]
 
 # Same as Black.
@@ -39,12 +32,47 @@ indent-width = 4
 # Assume Python 3.10
 target-version = "py310"
 
+[tool.ruff.format]
+# Use double quotes for strings
+quote-style = "double"
+# Indent with spaces
+indent-style = "space"
+# Respect magic trailing commas
+skip-magic-trailing-comma = false
+# Auto-detect line endings
+line-ending = "auto"
+
 [tool.ruff.lint]
-# Enable additional rules
-extend-select = ["I"]  # isort
+# Enable rules
+select = [
+    "E",    # pycodestyle errors
+    "F",    # Pyflakes (unused imports, undefined names)
+    "W",    # pycodestyle warnings
+    "I",    # isort (import sorting)
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+# Allow autofix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+unfixable = []
 
 [tool.ruff.lint.isort]
-known-first-party = ["dataset_loaders", "tokenizer", "config", "learning_rate"]
+# Updated for new project structure
+known-first-party = [
+    "model",
+    "data",
+    "training",
+    "evals",
+    "utils",
+    "config",
+    "enums",
+    "learning_rate",
+]
 
 [tool.mypy]
 python_version = "3.10"

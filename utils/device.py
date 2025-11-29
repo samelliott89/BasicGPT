@@ -33,4 +33,3 @@ def get_device_info(device: torch.device) -> str:
     if device.type == "mps":
         return "Apple Metal (MPS)"
     return "CPU"
-

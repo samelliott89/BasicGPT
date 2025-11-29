@@ -11,35 +11,41 @@ Usage:
 """
 
 import argparse
-from training.finetune import SFTTrainer, SFTConfig
+
+from training.finetune import SFTConfig, SFTTrainer
 
 
 def main():
     parser = argparse.ArgumentParser(description="Supervised Fine-Tuning")
-    
+
     # Model args
-    parser.add_argument("--model", type=str, default="gpt2",
-                       help="HuggingFace model name (gpt2, gpt2-medium, gpt2-large)")
-    
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="gpt2",
+        help="HuggingFace model name (gpt2, gpt2-medium, gpt2-large)",
+    )
+
     # Dataset args
-    parser.add_argument("--dataset", type=str, default="tatsu-lab/alpaca",
-                       help="HuggingFace dataset name")
-    parser.add_argument("--max-samples", type=int, default=None,
-                       help="Max samples to use (None = all)")
-    
+    parser.add_argument(
+        "--dataset", type=str, default="tatsu-lab/alpaca", help="HuggingFace dataset name"
+    )
+    parser.add_argument(
+        "--max-samples", type=int, default=None, help="Max samples to use (None = all)"
+    )
+
     # Training args
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--max-length", type=int, default=512)
-    parser.add_argument("--grad-accum", type=int, default=4,
-                       help="Gradient accumulation steps")
-    
+    parser.add_argument("--grad-accum", type=int, default=4, help="Gradient accumulation steps")
+
     # Output args
     parser.add_argument("--output-dir", type=str, default="./checkpoints/sft")
-    
+
     args = parser.parse_args()
-    
+
     # Create config
     config = SFTConfig(
         model_name=args.model,
@@ -52,7 +58,7 @@ def main():
         gradient_accumulation_steps=args.grad_accum,
         output_dir=args.output_dir,
     )
-    
+
     # Print config
     print("\n" + "=" * 60)
     print("Supervised Fine-Tuning Configuration")
@@ -68,22 +74,22 @@ def main():
     print(f"Max length: {config.max_length}")
     print(f"Output dir: {config.output_dir}")
     print()
-    
+
     # Create trainer and train
     trainer = SFTTrainer(config)
     trainer.train()
-    
+
     # Test generation
     print("\n" + "=" * 60)
     print("Testing generation after training")
     print("=" * 60)
-    
+
     prompts = [
         "Explain machine learning in simple terms.",
         "Write a short poem about the ocean.",
         "What are three tips for being productive?",
     ]
-    
+
     for prompt in prompts:
         print(f"\nPrompt: {prompt}")
         response = trainer.generate(prompt, max_new_tokens=100)
@@ -93,4 +99,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

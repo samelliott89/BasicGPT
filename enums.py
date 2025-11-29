@@ -9,6 +9,7 @@ from enum import Enum
 
 class DatasetName(Enum):
     """Available datasets for training."""
+
     SYNTHETIC = "PleIAs/SYNTH"
     FINEWEB = "HuggingFaceFW/fineweb"
     C4 = "allenai/c4"
@@ -19,6 +20,7 @@ class DatasetName(Enum):
 
 class DatasetLang(str, Enum):
     """String enum for dataset languages (Python 3.10 compatible)."""
+
     ENGLISH = "en"
     FRENCH = "fr"
     GERMAN = "de"
@@ -28,7 +30,7 @@ class DatasetLang(str, Enum):
 
 class DatasetSplit(Enum):
     """Dataset split types."""
+
     TRAIN = "train"
     VALIDATION = "validation"
     TEST = "test"
-
