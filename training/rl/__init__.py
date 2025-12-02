@@ -7,7 +7,14 @@ Train language models using reinforcement learning techniques:
 - Reward Model: Train a reward model for RLHF
 """
 
-from training.rl.config import DPOConfig
+from training.rl.config import DPOConfig, RewardModelConfig
 from training.rl.dpo_trainer import DPOTrainer
+from training.rl.reward_model import RewardModel, RewardTrainer
 
-__all__ = ["DPOTrainer", "DPOConfig"]
+__all__ = [
+    "DPOTrainer",
+    "DPOConfig",
+    "RewardModel",
+    "RewardTrainer",
+    "RewardModelConfig",
+]

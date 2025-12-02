@@ -12,3 +12,4 @@ wandb
 # Fine-tuning & RL (for GPT-2 models)
 transformers
 tqdm
+gymnasium

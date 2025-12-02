@@ -136,15 +136,22 @@ class RewardModelConfig:
     model_name: str = "gpt2"
 
     # Dataset with preference pairs
+    # Popular options:
+    # - "Anthropic/hh-rlhf" (human helpfulness/harmlessness preferences)
+    # - "stanfordnlp/SHP" (reddit preferences)
+    # - "argilla/ultrafeedback-binarized-preferences" (GPT-4 judged)
     dataset_name: str = "Anthropic/hh-rlhf"
     chosen_field: str = "chosen"
     rejected_field: str = "rejected"
+    max_samples: int | None = None  # Limit samples (useful for testing)
 
     # Training
     batch_size: int = 8
     learning_rate: float = 1e-5
     num_epochs: int = 1
     max_length: int = 512
+    max_grad_norm: float = 1.0
 
     # Output
     output_dir: str = "./checkpoints/reward_model"
+    logging_steps: int = 10
