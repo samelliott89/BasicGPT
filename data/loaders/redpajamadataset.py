@@ -1,4 +1,5 @@
-from data.loaders.datasetprep import DatasetLang, DatasetPrep
+from data.loaders.datasetprep import DatasetPrep
+from enums import DatasetLang
 
 # Custom config overrides (optional)
 # Uncomment and modify these to override defaults from config.py
